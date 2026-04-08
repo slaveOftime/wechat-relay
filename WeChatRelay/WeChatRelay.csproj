@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<LangVersion>13</LangVersion>
+
+		<!-- Tool packaging -->
+		<PackAsTool>true</PackAsTool>
+		<ToolCommandName>wechat-relay</ToolCommandName>
+		<PackageId>wechat-relay</PackageId>
+		<Title>wechat-relay</Title>
+		<Authors>slaveoftime</Authors>
+		<Description>Bridge WeChat personal account messages to any webhook. QR login, persistent message queue, and configurable hooks.</Description>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageProjectUrl>https://github.com/slaveoftime/wechat-relay</PackageProjectUrl>
+		<PackageTags>wechat;weixin;relay;hook;cli;dotnet-tool;ilink;open-relay</PackageTags>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<RepositoryType>git</RepositoryType>
+		<RepositoryUrl>https://github.com/slaveoftime/wechat-relay.git</RepositoryUrl>
+		<PublishRepositoryUrl>true</PublishRepositoryUrl>
+
+		<!-- Build optimizations -->
+		<PublishSingleFile>true</PublishSingleFile>
+		<StripSymbols>true</StripSymbols>
+		<InvariantGlobalization>true</InvariantGlobalization>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Include="../README.md" Pack="true" PackagePath="\" />
+		<None Update="appsettings.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.*" />
+		<PackageReference Include="Microsoft.Extensions.Http" Version="10.0.*" />
+	</ItemGroup>
+
+</Project>

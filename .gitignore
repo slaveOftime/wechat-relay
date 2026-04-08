@@ -1,0 +1,30 @@
+# Build output
+bin/
+obj/
+artifacts/
+
+# User-specific files
+appsettings.local.json
+*.user
+*.suo
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+package
+appsettings.Development.json
+appsettings.Local.json
+.qwen/
+
+.vs
+*.lscache

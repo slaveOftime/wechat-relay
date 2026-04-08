@@ -1,0 +1,99 @@
+# Manual Test Checklist
+
+## Prerequisites
+- .NET 10 SDK installed (for build) **or** download native binary from Releases
+- WeChat account on a phone (for QR scan)
+- `appsettings.json` in the working directory (copied from project root)
+
+## Test Matrix
+
+### 1. Session Cache (no WeChat needed if already logged in)
+```
+wechat-relay login
+```
+**Expected:** `✓ Valid credentials found in session cache.` or QR code flow.
+
+### 2. QR Login (requires phone)
+```
+wechat-relay login --force
+```
+**Expected:**
+- QR URL printed in terminal (boxed)
+- No browser auto-open
+- Wait for scan → `✓ Login successful!`
+- Credentials saved to `%APPDATA%\wechat-relay\session.json`
+
+### 3. List Send-to Candidates
+```
+wechat-relay list-send-to
+```
+**Expected:** Lists `UserId` and `ToUsers` from config/cache.
+
+### 4. Send Message (requires context token)
+```
+# Default channel (uses cached UserId)
+wechat-relay send --text "test"
+
+# Specific target
+wechat-relay send o9cq8...@im.wechat --text "test"
+
+# Via stdin
+echo hello | wechat-relay send
+```
+**Expected:** `✓ Sent.` or error with hint about context token.
+
+### 5. Listen + Hook (requires inbound message)
+
+**Step A — Configure hook:**
+Edit `appsettings.json`:
+```json
+{
+  "Hook": {
+    "Command": "echo {payload}",
+    "WorkingDirectory": null
+  }
+}
+```
+
+**Step B — Start listener:**
+```
+wechat-relay listen
+```
+**Expected:**
+- `=== Listening for WeChat Messages ===`
+- Long-poll starts against `getupdates`
+- Console waits for inbound messages
+
+**Step C — Send a message to the bot from WeChat on your phone.**
+
+**Expected output:**
+```
+[15:23:01] seq=42 from=o9cq8...@im.wechat type=1 text="hello"
+```
+
+**Hook payload (echoed to console):**
+```json
+{"seq":42,"message_id":...,"from_user_id":"o9cq8...","to_user_id":"...","create_time_ms":...,"session_id":"","message_type":1,"text":"hello","context_token":"AARz..."}
+```
+
+**Step D — Ctrl+C to stop.**
+**Expected:** Clean exit. Next `listen` resumes without losing messages (disk queue).
+
+### 6. Crash Recovery (queue persistence)
+1. Start `wechat-relay listen`
+2. Send a WeChat message
+3. Kill the process (Ctrl+C) immediately after it prints the message
+4. Run `wechat-relay listen` again
+**Expected:** `Drained N persisted messages from queue` → hook fires for the killed message.
+
+### 7. Global Tool
+```
+dotnet tool install -g --add-source ./artifacts/packages wechat-relay
+wechat-relay
+```
+**Expected:** Same behavior as `dotnet run --`.
+
+## Known Constraints
+- **context_token required for send**: The WeChat ilink API only allows replying to users who have messaged the bot first. Run `listen` first, receive a message, then `send` works automatically (token cached).
+- **QR expiry**: QR codes expire after ~3 minutes. Have your phone ready before running `login --force`.
+- **Hook runs async**: The hook command runs in a background thread. A disk-backed JSONL queue (`pending-messages.jsonl`) ensures messages aren't lost if the process crashes.

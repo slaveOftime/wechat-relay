@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+jobs:
+  # ── NuGet package ──
+  publish-package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Derive version
+        id: version
+        shell: bash
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack tool
+        run: >
+          dotnet pack wechat-relay.csproj
+          --configuration Release
+          --output ./artifacts/packages
+          -p:ContinuousIntegrationBuild=true
+          -p:Version=${{ steps.version.outputs.value }}
+
+      - name: Publish to NuGet
+        run: >
+          dotnet nuget push ./artifacts/packages/*.nupkg
+          --api-key ${{ secrets.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+        shell: pwsh
+
+  # ── Native AOT standalone binaries ──
+  publish-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+            archive: tar.gz
+          - os: windows-latest
+            rid: win-x64
+            archive: zip
+          - os: macos-14
+            rid: osx-arm64
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Derive version
+        id: version
+        shell: bash
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish native binary
+        run: >
+          dotnet publish wechat-relay.csproj
+          --configuration Release
+          --runtime ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishAot=true
+          -p:ContinuousIntegrationBuild=true
+          -p:Version=${{ steps.version.outputs.value }}
+          --output ./artifacts/publish/${{ matrix.rid }}
+
+      - name: Archive
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.value }}"
+          $rid = "${{ matrix.rid }}"
+          $archive = "${{ matrix.archive }}"
+          $asset = "wechat-relay-${version}-${rid}"
+          $publishDir = "./artifacts/publish/${rid}"
+          $ext = if ($archive -eq "zip") { ".exe" } else { "" }
+          $src = Join-Path $publishDir "wechat-relay${ext}"
+          $dst = Join-Path $publishDir "wechat-relay${ext}"
+
+          if (!(Test-Path $src)) { throw "Binary not found at '$src'" }
+
+          if ($archive -eq "zip") {
+            Compress-Archive -Path $src -DestinationPath "./artifacts/${asset}.zip"
+          } else {
+            tar -czf "./artifacts/${asset}.tar.gz" -C $publishDir "wechat-relay${ext}"
+          }
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ./artifacts/*.zip
+            ./artifacts/*.tar.gz
