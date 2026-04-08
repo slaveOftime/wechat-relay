@@ -33,7 +33,7 @@ public class HookRunner(HookConfig hookCfg, ILogger<HookRunner> log) : IHookRunn
     {
         _queue.Enqueue(msg);
         AppendToFile(msg);
-        log.LogInformation("Hook enqueued: seq={Seq} from={From}", msg.Seq, msg.FromUserId);
+        log.LogDebug("Hook enqueued: seq={Seq}", msg.Seq);
     }
 
     public async Task ProcessLoopAsync(CancellationToken ct)
@@ -134,7 +134,7 @@ public class HookRunner(HookConfig hookCfg, ILogger<HookRunner> log) : IHookRunn
         await process.WaitForExitAsync(ct);
 
         if (process.ExitCode == 0)
-            log.LogDebug("Hook completed for seq={Seq}: {Output}", msg.Seq, output.Trim());
+            log.LogInformation("Hook completed: seq={Seq}", msg.Seq);
         else
             log.LogWarning("Hook exited {Code} for seq={Seq}: {Error}", process.ExitCode, msg.Seq, error.Trim());
     }

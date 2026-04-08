@@ -67,14 +67,13 @@ public class SessionCache(ILogger<SessionCache> log, string? cachePath = null) :
                 ContextTokens = existing?.ContextTokens ?? new Dictionary<string, string>()
             };
             File.WriteAllText(_path, JsonSerializer.Serialize(session, JsonOpts));
-            log.LogInformation("Session saved to {Path}", _path);
         }
         catch (Exception ex) { log.LogError(ex, "Failed to save session"); }
     }
 
     public void Clear()
     {
-        try { if (File.Exists(_path)) { File.Delete(_path); log.LogInformation("Session cleared"); } }
+        try { if (File.Exists(_path)) { File.Delete(_path); } }
         catch (Exception ex) { log.LogWarning(ex, "Failed to clear session"); }
     }
 

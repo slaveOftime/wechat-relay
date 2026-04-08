@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Spectre.Console;
+using Spectre.Console.Cli;
 using WeChatRelay.Commands;
 using WeChatRelay.Models;
 using WeChatRelay.Services;
@@ -9,44 +11,38 @@ namespace WeChatRelay;
 
 public static class Program
 {
-    public static async Task<int> Main(string[] args)
+    public static int Main(string[] args)
     {
-        var mode = args.FirstOrDefault()?.ToLower();
+        var app = new CommandApp<DefaultCommand>();
 
-        using var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-
-        var services = ConfigureServices();
-        var provider = services.BuildServiceProvider();
-
-        return mode switch
+        app.Configure(config =>
         {
-            "login" => await LoginCommand.ExecuteAsync(
-                provider.GetRequiredService<IWeChatService>(),
-                provider.GetRequiredService<ISessionCache>(),
-                args.Skip(1).ToArray(),
-                cts.Token),
+            config.SetApplicationName("wechat-relay");
+            config.SetApplicationVersion(typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "1.0.0");
 
-            "listen" => await ListenCommand.ExecuteAsync(
-                provider.GetRequiredService<IWeChatService>(),
-                provider.GetRequiredService<IHookRunner>(),
-                provider.GetRequiredService<ISessionCache>(),
-                cts.Token),
+            config.AddCommand<LoginCommand>("login")
+                .WithDescription("QR code login (credentials cached)")
+                .WithExample("wechat-relay login")
+                .WithExample("wechat-relay login --force");
 
-            "list-send-to" => ListSendToCommand.Execute(
-                provider.GetRequiredService<IWeChatService>()),
+            config.AddCommand<ListenCommand>("listen")
+                .WithDescription("Run listener until Ctrl+C")
+                .WithExample("wechat-relay listen");
 
-            "send" => await SendCommand.ExecuteAsync(
-                provider.GetRequiredService<IWeChatService>(),
-                provider.GetRequiredService<ISessionCache>(),
-                args.Skip(1).ToArray(),
-                cts.Token),
+            config.AddCommand<ListSendToCommand>("list-send-to")
+                .WithDescription("Show available send-to candidates")
+                .WithExample("wechat-relay list-send-to");
 
-            _ => PrintUsage()
-        };
+            config.AddCommand<SendCommand>("send")
+                .WithDescription("Send a text message")
+                .WithExample("wechat-relay send --text \"Hello!\"")
+                .WithExample("wechat-relay send user@im.wechat --text \"Hi\"");
+        });
+
+        return app.Run(args);
     }
 
-    private static ServiceCollection ConfigureServices()
+    public static void ConfigureServices(IServiceCollection services, bool verbose = false)
     {
         var config = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
@@ -54,21 +50,12 @@ public static class Program
             .AddJsonFile("appsettings.Local.json", optional: true)
             .Build();
 
-        var verbose = config.GetValue("AppSettings:Verbose", false);
-
-        var services = new ServiceCollection();
-
         services.AddSingleton<IConfiguration>(config);
 
         // Configure console logging
         services.AddLogging(builder =>
         {
-            builder.AddSimpleConsole(options =>
-            {
-                options.SingleLine = true;
-                options.TimestampFormat = "yyyy-MM-dd HH:mm:ss ";
-            });
-            builder.SetMinimumLevel(verbose ? LogLevel.Debug : LogLevel.Information);
+            builder.SetMinimumLevel(verbose ? LogLevel.Debug : LogLevel.Warning);
         });
 
         services.AddSingleton<WeChatConfig>(sp =>
@@ -87,34 +74,37 @@ public static class Program
         var hookCfg = config.GetSection("Hook").Get<HookConfig>() ?? new HookConfig();
         services.AddSingleton(hookCfg);
         services.AddSingleton<IHookRunner, HookRunner>();
+    }
+}
 
-        return services;
+public class DefaultCommand : AsyncCommand<DefaultCommand.Settings>
+{
+    public class Settings : CommandSettings
+    {
     }
 
-    private static int PrintUsage()
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
-        var version = typeof(Program).Assembly.GetName().Version;
-        var versionStr = version != null ? $"v{version.Major}.{version.Minor}.{version.Build}" : "v1.0.0";
-        Console.WriteLine("╔═══════════════════════════════════════════════╗");
-        Console.WriteLine($"║           wechat-relay  {versionStr,-22}║");
-        Console.WriteLine("║  Bridge WeChat messages to any webhook        ║");
-        Console.WriteLine("╚═══════════════════════════════════════════════╝");
-        Console.WriteLine();
-        Console.WriteLine("Commands:");
-        Console.WriteLine("  login              QR code login (credentials cached)");
-        Console.WriteLine("  login --force      Force new QR login");
-        Console.WriteLine("  listen             Run listener until Ctrl+C");
-        Console.WriteLine("  list-send-to       Show available send-to candidates");
-        Console.WriteLine("  send [target]      Send a text message");
-        Console.WriteLine();
-        Console.WriteLine("Options:");
-        Console.WriteLine("  --text <msg>       Message text for send command");
-        Console.WriteLine();
-        Console.WriteLine("Examples:");
-        Console.WriteLine("  wechat-relay login");
-        Console.WriteLine("  wechat-relay listen");
-        Console.WriteLine("  wechat-relay send --text \"Hello!\"");
-        Console.WriteLine("  wechat-relay send user@im.wechat --text \"Hi\"");
-        return 1;
+        AnsiConsole.Write(new FigletText("wechat-relay")
+            .LeftJustified()
+            .Color(Color.Cyan1));
+
+        AnsiConsole.MarkupLine("\n[bold yellow]Bridge WeChat messages to any webhook[/]");
+        AnsiConsole.MarkupLine("[grey]https://github.com/slaveoftime/wechat-relay[/]\n");
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[underline]Commands:[/]");
+        AnsiConsole.MarkupLine("  [green]login[/]              QR code login (credentials cached)");
+        AnsiConsole.MarkupLine("  [green]listen[/]             Run listener until Ctrl+C");
+        AnsiConsole.MarkupLine("  [green]list-send-to[/]       Show available send-to candidates");
+        AnsiConsole.MarkupLine("  [green]send[/] <target>      Send a text message");
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[underline]Examples:[/]");
+        AnsiConsole.MarkupLine("  [grey]wechat-relay login[/]");
+        AnsiConsole.MarkupLine("  [grey]wechat-relay listen[/]");
+        AnsiConsole.MarkupLine("  [grey]wechat-relay send --text \"Hello!\"[/]");
+        AnsiConsole.MarkupLine("  [grey]wechat-relay send user@im.wechat --text \"Hi\"[/]");
+
+        return await Task.FromResult(1);
     }
 }

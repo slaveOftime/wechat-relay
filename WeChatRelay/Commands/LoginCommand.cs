@@ -1,63 +1,102 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Spectre.Console;
+using Spectre.Console.Cli;
 using WeChatRelay.Models;
 using WeChatRelay.Services;
 
 namespace WeChatRelay.Commands;
 
-public static class LoginCommand
+public class LoginCommand : AsyncCommand<LoginCommand.Settings>
 {
-    private const string LocalConfigPath = "appsettings.Local.json";
-
-    public static async Task<int> ExecuteAsync(IWeChatService weChat, ISessionCache cache, string[] args, CancellationToken ct = default)
+    public class Settings : CommandSettings
     {
-        Console.WriteLine("=== WeChat QR Login ===\n");
+        [CommandOption("-f|--force")]
+        public bool Force { get; init; }
 
+        [CommandOption("--verbose")]
+        public bool Verbose { get; init; }
+    }
+
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+    {
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+        var services = new ServiceCollection();
+        Program.ConfigureServices(services, settings.Verbose);
+        var provider = services.BuildServiceProvider();
+
+        var weChat = provider.GetRequiredService<IWeChatService>();
+        var cache = provider.GetRequiredService<ISessionCache>();
+
+        return await ExecuteAsync(weChat, cache, settings, cts.Token);
+    }
+
+    private static async Task<int> ExecuteAsync(IWeChatService weChat, ISessionCache cache, Settings settings, CancellationToken ct)
+    {
         var cached = cache.Load();
         var localCreds = LoadLocalConfig();
-        var force = args.Contains("--force") || args.Contains("-f");
 
         // Prefer local config file over session cache
         var effective = localCreds is { BotToken: not null } ? localCreds : cached;
 
-        if (!force && effective is { BotToken: not null })
+        if (!settings.Force && effective is { BotToken: not null })
         {
             var source = localCreds is { BotToken: not null } ? "appsettings.Local.json" : "session cache";
             PrintCreds(source, effective.BotId, effective.UserId);
             return 0;
         }
 
-        if (force) { cache.Clear(); DeleteLocalConfig(); Console.WriteLine("Credentials cleared.\n"); }
+        if (settings.Force)
+        {
+            cache.Clear();
+            DeleteLocalConfig();
+        }
 
-        Console.WriteLine("Fetching QR code...");
+        var panel = new Panel(new Markup("[yellow]Fetching QR code...[/]"))
+            .Border(BoxBorder.Rounded)
+            .BorderColor(Color.Grey);
+        AnsiConsole.Write(panel);
+
         var qr = await weChat.StartQrLoginAsync(ct);
 
         if (string.IsNullOrEmpty(qr.QrcodeUrl))
-        { Console.WriteLine($"Error: {qr.Qrcode}"); return 1; }
+        {
+            AnsiConsole.MarkupLine($"[bold red]Error:[/] {qr.Qrcode}");
+            return 1;
+        }
 
-        Console.WriteLine();
-        Console.WriteLine("┌─────────────────────────────────────────────────┐");
-        Console.WriteLine("│  Scan this QR code with WeChat on your phone    │");
-        Console.WriteLine("│                                                 │");
-        Console.WriteLine($"│  {qr.QrcodeUrl}  │");
-        Console.WriteLine("│                                                 │");
-        Console.WriteLine("│  Waiting for confirmation (8 min timeout)...    │");
-        Console.WriteLine("└─────────────────────────────────────────────────┘");
-        Console.WriteLine();
+        AnsiConsole.WriteLine();
+
+        var qrPanel = new Panel(new Markup($@"
+[bold white]Scan this QR code with WeChat on your phone[/]
+
+[cyan]{qr.QrcodeUrl}[/]
+
+[grey]Waiting for confirmation (8 min timeout)...[/]
+"))
+            .Border(BoxBorder.Rounded)
+            .BorderColor(Color.Cyan1)
+            .Header(new PanelHeader("[bold cyan]QR Code Login[/]"));
+        AnsiConsole.Write(qrPanel);
 
         var (ok, token, accountId, baseUrl, userId, msg) = await weChat.WaitForQrConfirmAsync(qr.Qrcode, ct);
 
-        if (!ok) { Console.WriteLine($"Login failed: {msg}"); return 1; }
+        if (!ok)
+        {
+            AnsiConsole.MarkupLine($"\n[bold red]Login failed:[/] {msg}");
+            return 1;
+        }
 
-        Console.WriteLine("\n✓ Login successful!\n");
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[bold green]✓ Login successful![/]");
 
         var config = new WeChatConfig { BotToken = token, BotId = accountId, UserId = userId, BaseUrl = baseUrl, BotType = "3" };
         SaveLocalConfig(config);
         cache.Save(config);
 
-        Console.WriteLine("Credentials saved to appsettings.Local.json and session cache.");
-        Console.WriteLine($"  Bot ID:   {accountId}");
-        Console.WriteLine($"  User ID:  {userId}");
-        Console.WriteLine("\nRun 'wechat-relay listen' to start receiving messages.");
+        AnsiConsole.MarkupLine($"\n[bold blue]Run 'wechat-relay listen' to start receiving messages.[/]");
         return 0;
     }
 
@@ -65,8 +104,8 @@ public static class LoginCommand
     {
         try
         {
-            if (!File.Exists(LocalConfigPath)) return null;
-            var root = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(LocalConfigPath));
+            if (!File.Exists("appsettings.Local.json")) return null;
+            var root = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText("appsettings.Local.json"));
             if (!root.TryGetProperty("WeChat", out var wc)) return null;
             return new WeChatConfig
             {
@@ -84,9 +123,9 @@ public static class LoginCommand
     private static void SaveLocalConfig(WeChatConfig c)
     {
         var existing = new Dictionary<string, object?>();
-        if (File.Exists(LocalConfigPath))
+        if (File.Exists("appsettings.Local.json"))
         {
-            try { existing = JsonSerializer.Deserialize<Dictionary<string, object?>>(File.ReadAllText(LocalConfigPath)) ?? new(); }
+            try { existing = JsonSerializer.Deserialize<Dictionary<string, object?>>(File.ReadAllText("appsettings.Local.json")) ?? new(); }
             catch { existing = new(); }
         }
 
@@ -100,19 +139,25 @@ public static class LoginCommand
             ToUsers = c.ToUsers
         };
 
-        File.WriteAllText(LocalConfigPath, JsonSerializer.Serialize(existing, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText("appsettings.Local.json", JsonSerializer.Serialize(existing, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private static void DeleteLocalConfig()
     {
-        if (File.Exists(LocalConfigPath)) File.Delete(LocalConfigPath);
+        if (File.Exists("appsettings.Local.json")) File.Delete("appsettings.Local.json");
     }
 
     private static void PrintCreds(string source, string? botId, string? userId)
     {
-        Console.WriteLine($"✓ Valid credentials found in {source}.");
-        Console.WriteLine($"  Bot ID:  {botId}");
-        Console.WriteLine($"  User ID: {userId}");
-        Console.WriteLine("\nTo force a new login: wechat-relay login --force");
+        var panel = new Panel(new Markup($@"
+[bold green]✓ Already logged in[/] ([grey]{source}[/])
+
+[bold]Next steps:[/]
+  • Run [cyan]wechat-relay listen[/] to start receiving messages
+  • Run [cyan]wechat-relay login --force[/] to login with a new account
+"))
+            .Border(BoxBorder.Rounded)
+            .BorderColor(Color.Green);
+        AnsiConsole.Write(panel);
     }
 }

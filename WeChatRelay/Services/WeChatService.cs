@@ -31,16 +31,12 @@ public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatServ
         var url = new Uri(new Uri(NormalizeBaseUrl(cfg.BaseUrl ?? DefaultBaseUrl)),
             $"ilink/bot/get_bot_qrcode?bot_type={Uri.EscapeDataString(cfg.BotType ?? "3")}");
 
-        log.LogInformation("Fetching QR code...");
         var resp = await http.GetAsync(url, ct);
         resp.EnsureSuccessStatusCode();
 
         var json = await resp.Content.ReadAsStringAsync(ct);
         var result = JsonSerializer.Deserialize<QrStartResponse>(json, ReadOpts)
             ?? new QrStartResponse { Qrcode = "Failed to parse response" };
-
-        if (!string.IsNullOrEmpty(result.QrcodeUrl))
-            log.LogInformation("QR code obtained. Session: {Session}", result.Qrcode);
 
         return result;
     }
@@ -63,13 +59,12 @@ public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatServ
             {
                 case "wait": break;
                 case "scaned":
-                    if (!scannedLogged) { log.LogInformation("QR scanned. Confirm on your phone..."); scannedLogged = true; }
+                    if (!scannedLogged) { scannedLogged = true; }
                     break;
                 case "expired": return (false, null, null, null, null, "QR expired. Generate a new one.");
                 case "confirmed":
                     if (string.IsNullOrEmpty(status.AccountId))
                         return (false, null, null, null, null, "Missing ilink_bot_id from server.");
-                    log.LogInformation("Login confirmed: {Id}", status.AccountId);
                     return (true, status.BotToken, status.AccountId,
                         string.IsNullOrWhiteSpace(status.BaseUrl) ? baseUrl : NormalizeBaseUrl(status.BaseUrl),
                         status.UserId, "OK");
@@ -109,8 +104,7 @@ public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatServ
         var result = JsonSerializer.Deserialize<SendMessageResponse>(respJson, ReadOpts)
             ?? new SendMessageResponse { Ret = -1, ErrMsg = "Failed to parse response" };
 
-        if (result.Ret == 0) log.LogInformation("Message sent to {User}", toUserId);
-        else log.LogWarning("Send failed: {Ret} {Err}", result.Ret, result.ErrMsg);
+        if (result.Ret != 0) log.LogWarning("Send failed: {Ret} {Err}", result.Ret, result.ErrMsg);
 
         return result;
     }
