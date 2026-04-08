@@ -1,21 +1,18 @@
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console;
-using Spectre.Console.Cli;
 using WeChatRelay.Services;
 
 namespace WeChatRelay.Commands;
 
-public class ListSendToCommand : Command<ListSendToCommand.Settings>
+public sealed class ListSendToCommandSettings : VerboseCommandSettings
 {
-    public class Settings : CommandSettings
-    {
-    }
+}
 
-    public override int Execute(CommandContext context, Settings settings)
+public static class ListSendToCommand
+{
+    public static int Execute(ListSendToCommandSettings settings)
     {
-        var services = new ServiceCollection();
-        Program.ConfigureServices(services);
-        var provider = services.BuildServiceProvider();
+        using var provider = Program.CreateServiceProvider(settings.Verbose);
 
         var weChat = provider.GetRequiredService<IWeChatService>();
 

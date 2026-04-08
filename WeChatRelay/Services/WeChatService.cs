@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using System.Text;
 using System.Text.Json;
 using WeChatRelay.Models;
+using WeChatRelay.Serialization;
 
 namespace WeChatRelay.Services;
 
@@ -15,14 +16,17 @@ public interface IWeChatService
     List<SendToCandidate> GetSendToCandidates();
 }
 
-public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatService> log) : IWeChatService
+public class WeChatService(
+    HttpClient http,
+    WeChatConfig cfg,
+    ILoginSessionStore loginSessionStore,
+    IContextTokenStore contextTokenStore,
+    ILogger<WeChatService> log) : IWeChatService
 {
     private const string DefaultBaseUrl = "https://ilinkai.weixin.qq.com/";
     private const int SessionExpiredErrCode = -14;
     private static readonly TimeSpan QrPollTimeout = TimeSpan.FromSeconds(35);
     private static readonly TimeSpan QrLoginTimeout = TimeSpan.FromMinutes(8);
-    private static readonly JsonSerializerOptions ReadOpts = new() { PropertyNameCaseInsensitive = true };
-    private static readonly JsonSerializerOptions WriteOpts = new() { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
 
     public bool IsLoggedIn => !string.IsNullOrEmpty(cfg.BotToken) && !string.IsNullOrEmpty(cfg.BaseUrl);
 
@@ -35,7 +39,7 @@ public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatServ
         resp.EnsureSuccessStatusCode();
 
         var json = await resp.Content.ReadAsStringAsync(ct);
-        var result = JsonSerializer.Deserialize<QrStartResponse>(json, ReadOpts)
+        var result = JsonSerializer.Deserialize(json, WeChatJsonContext.Default.QrStartResponse)
             ?? new QrStartResponse { Qrcode = "Failed to parse response" };
 
         return result;
@@ -93,7 +97,7 @@ public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatServ
             }
         };
 
-        var json = JsonSerializer.Serialize(req, WriteOpts);
+        var json = JsonSerializer.Serialize(req, WeChatJsonContext.Default.SendMessageRequest);
         var url = new Uri(new Uri(NormalizeBaseUrl(cfg.BaseUrl!)), "ilink/bot/sendmessage");
 
         ApplyHeaders();
@@ -101,8 +105,13 @@ public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatServ
         resp.EnsureSuccessStatusCode();
 
         var respJson = await resp.Content.ReadAsStringAsync(ct);
-        var result = JsonSerializer.Deserialize<SendMessageResponse>(respJson, ReadOpts)
+        var result = JsonSerializer.Deserialize(respJson, WeChatJsonContext.Default.SendMessageResponse)
             ?? new SendMessageResponse { Ret = -1, ErrMsg = "Failed to parse response" };
+
+        if (result.Ret == SessionExpiredErrCode)
+        {
+            InvalidateSession("Session expired while sending a message. Re-login required.");
+        }
 
         if (result.Ret != 0) log.LogWarning("Send failed: {Ret} {Err}", result.Ret, result.ErrMsg);
 
@@ -118,7 +127,9 @@ public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatServ
         {
             try
             {
-                var reqJson = JsonSerializer.Serialize(new { get_updates_buf = buf });
+                var reqJson = JsonSerializer.Serialize(
+                    new GetUpdatesRequest { GetUpdatesBuf = buf },
+                    WeChatJsonContext.Default.GetUpdatesRequest);
                 var url = new Uri(new Uri(NormalizeBaseUrl(cfg.BaseUrl!)), "ilink/bot/getupdates");
 
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -129,7 +140,7 @@ public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatServ
                 resp.EnsureSuccessStatusCode();
 
                 var respJson = await resp.Content.ReadAsStringAsync(ct);
-                var result = JsonSerializer.Deserialize<GetUpdatesResponse>(respJson, ReadOpts);
+                var result = JsonSerializer.Deserialize(respJson, WeChatJsonContext.Default.GetUpdatesResponse);
 
                 if (result?.Ret == 0)
                 {
@@ -142,8 +153,8 @@ public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatServ
                     var code = result?.ErrCode ?? result?.Ret ?? 0;
                     if (code == SessionExpiredErrCode)
                     {
-                        log.LogError("Session expired. Re-login required.");
-                        await Task.Delay(TimeSpan.FromMinutes(2), ct);
+                        InvalidateSession("Session expired. Re-login required.");
+                        break;
                     }
                     else
                     {
@@ -204,7 +215,7 @@ public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatServ
             var text = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
                 throw new HttpRequestException($"QR poll failed: {(int)resp.StatusCode}");
-            return JsonSerializer.Deserialize<QrStatusResponse>(text, ReadOpts) ?? new QrStatusResponse { Status = "wait" };
+            return JsonSerializer.Deserialize(text, WeChatJsonContext.Default.QrStatusResponse) ?? new QrStatusResponse { Status = "wait" };
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -214,4 +225,11 @@ public class WeChatService(HttpClient http, WeChatConfig cfg, ILogger<WeChatServ
 
     private static string NormalizeBaseUrl(string u) => u.EndsWith('/') ? u : $"{u}/";
     private static string GenerateRandomUin() => Convert.ToBase64String(BitConverter.GetBytes(Random.Shared.Next(int.MinValue, int.MaxValue)));
+
+    private void InvalidateSession(string message)
+    {
+        loginSessionStore.Clear();
+        contextTokenStore.Clear();
+        log.LogError(message);
+    }
 }

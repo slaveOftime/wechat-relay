@@ -7,11 +7,11 @@
 
 ## Test Matrix
 
-### 1. Session Cache (no WeChat needed if already logged in)
+### 1. Stored Login Session (no WeChat needed if already logged in)
 ```
 wechat-relay login
 ```
-**Expected:** `✓ Valid credentials found in session cache.` or QR code flow.
+**Expected:** `✓ Already logged in (local session store).` or QR code flow.
 
 ### 2. QR Login (requires phone)
 ```
@@ -21,13 +21,13 @@ wechat-relay login --force
 - QR URL printed in terminal (boxed)
 - No browser auto-open
 - Wait for scan → `✓ Login successful!`
-- Credentials saved to `%APPDATA%\wechat-relay\session.json`
+- Credentials saved to `%APPDATA%\wechat-relay\session-state.json`
 
 ### 3. List Send-to Candidates
 ```
 wechat-relay list-send-to
 ```
-**Expected:** Lists `UserId` and `ToUsers` from config/cache.
+**Expected:** Lists `UserId` and `ToUsers` from config/local session state.
 
 ### 4. Send Message (requires context token)
 ```

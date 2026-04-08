@@ -1,0 +1,41 @@
+{
+  "name": "@slaveoftime/wechat-relay",
+  "version": "1.0.0",
+  "description": "Bridge WeChat personal account messages to any webhook.",
+  "keywords": [
+    "wechat",
+    "weixin",
+    "relay",
+    "cli",
+    "dotnet",
+    "native-binary"
+  ],
+  "homepage": "https://github.com/slaveoftime/wechat-relay#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/slaveoftime/wechat-relay.git"
+  },
+  "bugs": {
+    "url": "https://github.com/slaveoftime/wechat-relay/issues"
+  },
+  "license": "MIT",
+  "bin": {
+    "wechat-relay": "./bin/wechat-relay.js"
+  },
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "README.md"
+  ]
+}

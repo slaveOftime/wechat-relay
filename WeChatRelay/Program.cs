@@ -1,8 +1,8 @@
+using System.CommandLine;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Spectre.Console;
-using Spectre.Console.Cli;
+using Microsoft.Extensions.Options;
 using WeChatRelay.Commands;
 using WeChatRelay.Models;
 using WeChatRelay.Services;
@@ -13,33 +13,10 @@ public static class Program
 {
     public static int Main(string[] args)
     {
-        var app = new CommandApp<DefaultCommand>();
-
-        app.Configure(config =>
-        {
-            config.SetApplicationName("wechat-relay");
-            config.SetApplicationVersion(typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "1.0.0");
-
-            config.AddCommand<LoginCommand>("login")
-                .WithDescription("QR code login (credentials cached)")
-                .WithExample("wechat-relay login")
-                .WithExample("wechat-relay login --force");
-
-            config.AddCommand<ListenCommand>("listen")
-                .WithDescription("Run listener until Ctrl+C")
-                .WithExample("wechat-relay listen");
-
-            config.AddCommand<ListSendToCommand>("list-send-to")
-                .WithDescription("Show available send-to candidates")
-                .WithExample("wechat-relay list-send-to");
-
-            config.AddCommand<SendCommand>("send")
-                .WithDescription("Send a text message")
-                .WithExample("wechat-relay send --text \"Hello!\"")
-                .WithExample("wechat-relay send user@im.wechat --text \"Hi\"");
-        });
-
-        return app.Run(args);
+        Console.InputEncoding = System.Text.Encoding.UTF8;
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        var commandLineArgs = args.Length == 0 ? ["--help"] : args;
+        return BuildCommandLine().Parse(commandLineArgs).Invoke();
     }
 
     public static void ConfigureServices(IServiceCollection services, bool verbose = false)
@@ -47,64 +24,145 @@ public static class Program
         var config = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
             .AddJsonFile("appsettings.json", optional: true)
-            .AddJsonFile("appsettings.Local.json", optional: true)
             .Build();
 
         services.AddSingleton<IConfiguration>(config);
+        services.AddSingleton<IOptions<WeChatOptions>>(Options.Create(BuildWeChatOptions(config.GetSection("WeChat"))));
 
         // Configure console logging
         services.AddLogging(builder =>
         {
+            builder.AddSimpleConsole(options =>
+            {
+                options.SingleLine = true;
+                options.TimestampFormat = "HH:mm:ss ";
+            });
             builder.SetMinimumLevel(verbose ? LogLevel.Debug : LogLevel.Warning);
         });
 
         services.AddSingleton<WeChatConfig>(sp =>
         {
-            var file = config.GetSection("WeChat").Get<WeChatConfig>() ?? new WeChatConfig();
-            var cache = sp.GetRequiredService<ISessionCache>();
-            var cached = cache.Load();
-            return cached is { BotToken: not null }
-                ? new WeChatConfig { BotToken = cached.BotToken, BotId = cached.BotId, UserId = cached.UserId ?? file.UserId, BaseUrl = cached.BaseUrl ?? file.BaseUrl, BotType = cached.BotType, ToUsers = cached.ToUsers ?? file.ToUsers }
-                : file;
+            var options = sp.GetRequiredService<IOptions<WeChatOptions>>().Value;
+            var session = sp.GetRequiredService<ILoginSessionStore>().Load();
+            return WeChatConfig.Create(options, session);
         });
 
-        services.AddSingleton<ISessionCache, SessionCache>();
+        services.AddSingleton<SessionStore>();
+        services.AddSingleton<ILoginSessionStore>(sp => sp.GetRequiredService<SessionStore>());
+        services.AddSingleton<IContextTokenStore>(sp => sp.GetRequiredService<SessionStore>());
         services.AddHttpClient<IWeChatService, WeChatService>();
 
-        var hookCfg = config.GetSection("Hook").Get<HookConfig>() ?? new HookConfig();
-        services.AddSingleton(hookCfg);
+        services.AddSingleton(BuildHookConfig(config.GetSection("Hook")));
         services.AddSingleton<IHookRunner, HookRunner>();
+    }
+
+    public static ServiceProvider CreateServiceProvider(bool verbose = false)
+    {
+        var services = new ServiceCollection();
+        ConfigureServices(services, verbose);
+        return services.BuildServiceProvider();
+    }
+
+    private static WeChatOptions BuildWeChatOptions(IConfigurationSection section) =>
+        new()
+        {
+            BaseUrl = section[nameof(WeChatOptions.BaseUrl)] ?? "https://ilinkai.weixin.qq.com/",
+            BotType = section[nameof(WeChatOptions.BotType)] ?? "3",
+            UserId = section[nameof(WeChatOptions.UserId)],
+            ToUsers = section[nameof(WeChatOptions.ToUsers)]
+        };
+
+    private static HookConfig BuildHookConfig(IConfigurationSection section) =>
+        new()
+        {
+            Command = section[nameof(HookConfig.Command)] ?? "echo",
+            WorkingDirectory = section[nameof(HookConfig.WorkingDirectory)]
+        };
+
+    private static RootCommand BuildCommandLine()
+    {
+        var rootCommand = new RootCommand("Bridge WeChat messages to any webhook");
+
+        var forceOption = new Option<bool>("--force")
+        {
+            Description = "Login with a new account and clear stored session state"
+        };
+        forceOption.Aliases.Add("-f");
+        var loginVerboseOption = CreateVerboseOption();
+        var loginCommand = new Command("login", "QR code login (stored locally)")
+        {
+            forceOption,
+            loginVerboseOption
+        };
+        loginCommand.SetAction(parseResult =>
+            LoginCommand.ExecuteAsync(new LoginCommandSettings
+            {
+                Force = parseResult.GetValue(forceOption),
+                Verbose = parseResult.GetValue(loginVerboseOption)
+            }, CancellationToken.None).GetAwaiter().GetResult());
+
+        var listenVerboseOption = CreateVerboseOption();
+        var listenCommand = new Command("listen", "Run listener until Ctrl+C");
+        listenCommand.Options.Add(listenVerboseOption);
+        listenCommand.SetAction(parseResult =>
+            ListenCommand.ExecuteAsync(new ListenCommandSettings
+            {
+                Verbose = parseResult.GetValue(listenVerboseOption)
+            }, CancellationToken.None).GetAwaiter().GetResult());
+
+        var listSendToVerboseOption = CreateVerboseOption();
+        var listSendToCommand = new Command("list-send-to", "Show available send-to candidates");
+        listSendToCommand.Options.Add(listSendToVerboseOption);
+        listSendToCommand.SetAction(parseResult =>
+            ListSendToCommand.Execute(new ListSendToCommandSettings
+            {
+                Verbose = parseResult.GetValue(listSendToVerboseOption)
+            }));
+
+        var targetArgument = new Argument<string?>("target")
+        {
+            Arity = ArgumentArity.ZeroOrOne,
+            Description = "Optional WeChat user ID. Defaults to configured UserId"
+        };
+        var textOption = new Option<string?>("--text")
+        {
+            Description = "Message text. If omitted, reads from stdin"
+        };
+        var sendVerboseOption = CreateVerboseOption();
+        var sendCommand = new Command("send", "Send a text message")
+        {
+            targetArgument,
+            textOption,
+            sendVerboseOption
+        };
+        sendCommand.SetAction(parseResult =>
+            SendCommand.ExecuteAsync(new SendCommandSettings
+            {
+                Target = parseResult.GetValue(targetArgument),
+                Text = parseResult.GetValue(textOption),
+                Verbose = parseResult.GetValue(sendVerboseOption)
+            }, CancellationToken.None).GetAwaiter().GetResult());
+
+        rootCommand.Subcommands.Add(loginCommand);
+        rootCommand.Subcommands.Add(listenCommand);
+        rootCommand.Subcommands.Add(listSendToCommand);
+        rootCommand.Subcommands.Add(sendCommand);
+
+        return rootCommand;
+    }
+
+    private static Option<bool> CreateVerboseOption()
+    {
+        var verboseOption = new Option<bool>("--verbose")
+        {
+            Description = "Enable debug logging"
+        };
+        verboseOption.Aliases.Add("-v");
+        return verboseOption;
     }
 }
 
-public class DefaultCommand : AsyncCommand<DefaultCommand.Settings>
+public class VerboseCommandSettings
 {
-    public class Settings : CommandSettings
-    {
-    }
-
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
-    {
-        AnsiConsole.Write(new FigletText("wechat-relay")
-            .LeftJustified()
-            .Color(Color.Cyan1));
-
-        AnsiConsole.MarkupLine("\n[bold yellow]Bridge WeChat messages to any webhook[/]");
-        AnsiConsole.MarkupLine("[grey]https://github.com/slaveoftime/wechat-relay[/]\n");
-
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[underline]Commands:[/]");
-        AnsiConsole.MarkupLine("  [green]login[/]              QR code login (credentials cached)");
-        AnsiConsole.MarkupLine("  [green]listen[/]             Run listener until Ctrl+C");
-        AnsiConsole.MarkupLine("  [green]list-send-to[/]       Show available send-to candidates");
-        AnsiConsole.MarkupLine("  [green]send[/] <target>      Send a text message");
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[underline]Examples:[/]");
-        AnsiConsole.MarkupLine("  [grey]wechat-relay login[/]");
-        AnsiConsole.MarkupLine("  [grey]wechat-relay listen[/]");
-        AnsiConsole.MarkupLine("  [grey]wechat-relay send --text \"Hello!\"[/]");
-        AnsiConsole.MarkupLine("  [grey]wechat-relay send user@im.wechat --text \"Hi\"[/]");
-
-        return await Task.FromResult(1);
-    }
+    public bool Verbose { get; init; }
 }

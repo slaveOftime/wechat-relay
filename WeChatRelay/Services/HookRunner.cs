@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using WeChatRelay.Models;
+using WeChatRelay.Serialization;
 
 namespace WeChatRelay.Services;
 
@@ -65,7 +66,7 @@ public class HookRunner(HookConfig hookCfg, ILogger<HookRunner> log) : IHookRunn
         {
             var dir = Path.GetDirectoryName(_queueFile);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
-            File.AppendAllText(_queueFile, JsonSerializer.Serialize(msg) + Environment.NewLine);
+            File.AppendAllText(_queueFile, JsonSerializer.Serialize(msg, WeChatJsonContext.Default.InboundMessage) + Environment.NewLine);
         }
         catch (Exception ex) { log.LogWarning(ex, "Failed to persist message to queue"); }
     }
@@ -78,7 +79,7 @@ public class HookRunner(HookConfig hookCfg, ILogger<HookRunner> log) : IHookRunn
             foreach (var line in File.ReadLines(_queueFile))
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
-                var msg = JsonSerializer.Deserialize<InboundMessage>(line.Trim());
+                var msg = JsonSerializer.Deserialize(line.Trim(), WeChatJsonContext.Default.InboundMessage);
                 if (msg is not null) _queue.Enqueue(msg);
             }
             // Clear the file after draining
@@ -91,20 +92,18 @@ public class HookRunner(HookConfig hookCfg, ILogger<HookRunner> log) : IHookRunn
     private async Task InvokeHookAsync(InboundMessage msg, CancellationToken ct)
     {
         // Build the hook payload JSON
-        var payload = new
+        var json = JsonSerializer.Serialize(new HookPayload
         {
-            seq = msg.Seq,
-            message_id = msg.MessageId,
-            from_user_id = msg.FromUserId,
-            to_user_id = msg.ToUserId,
-            create_time_ms = msg.CreateTimeMs,
-            session_id = msg.SessionId,
-            message_type = msg.MessageType,
-            text = ExtractText(msg),
-            context_token = msg.ContextToken
-        };
-
-        var json = JsonSerializer.Serialize(payload);
+            Seq = msg.Seq,
+            MessageId = msg.MessageId,
+            FromUserId = msg.FromUserId,
+            ToUserId = msg.ToUserId,
+            CreateTimeMs = msg.CreateTimeMs,
+            SessionId = msg.SessionId,
+            MessageType = msg.MessageType,
+            Text = ExtractText(msg),
+            ContextToken = msg.ContextToken
+        }, WeChatJsonContext.Default.HookPayload);
         var escaped = json.Replace("\"", "\\\"");
 
         var args = hookCfg.Command;

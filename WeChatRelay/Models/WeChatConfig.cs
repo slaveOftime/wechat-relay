@@ -11,4 +11,15 @@ public class WeChatConfig
     public string? BaseUrl { get; init; }
     public string BotType { get; init; } = "3";
     public string? ToUsers { get; init; }
+
+    public static WeChatConfig Create(WeChatOptions options, WeChatLoginSession? session) =>
+        new()
+        {
+            BotToken = session?.BotToken,
+            BotId = session?.BotId,
+            UserId = session?.UserId ?? options.UserId,
+            BaseUrl = session?.BaseUrl ?? options.BaseUrl,
+            BotType = session?.BotType ?? options.BotType,
+            ToUsers = options.ToUsers
+        };
 }

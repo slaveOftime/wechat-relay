@@ -3,16 +3,16 @@
 > Bridge **WeChat personal account** messages to any webhook, script, or pipeline.  
 > Zero dependencies beyond .NET 10. Native AOT binaries for Linux, macOS & Windows.
 
-[![CI](https://github.com/slaveoftime/open-relay-wechat-hook/actions/workflows/ci.yml/badge.svg)](https://github.com/slaveoftime/open-relay-wechat-hook/actions/workflows/ci.yml)
+[![CI](https://github.com/slaveoftime/wechat-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/slaveoftime/wechat-relay/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/wechat-relay.svg?color=blue&logo=nuget)](https://www.nuget.org/packages/wechat-relay)
-[![MIT](https://img.shields.io/github/license/slaveoftime/open-relay-wechat-hook)](LICENSE)
+[![MIT](https://img.shields.io/github/license/slaveoftime/wechat-relay)](LICENSE)
 [![dotnet tool](https://img.shields.io/badge/dotnet--tool-install-512bd4)](#install)
 
 ## Features
 
 | | |
 |---|---|
-| 🔐 **QR Login** | Scan once, credentials saved to `appsettings.Local.json`. No expiry until server invalidates. |
+| 🔐 **QR Login** | Scan once, credentials saved in a local JSON session file. No expiry until the server invalidates the session. |
 | 📡 **Persistent Listener** | Long-poll WeChat messages. Survives restarts via disk-backed queue. |
 | 🔗 **Configurable Hooks** | Every inbound message triggers your command (default: `echo`). Passes JSON metadata. |
 | 📤 **Send Messages** | Reply to any user via CLI. Context tokens cached automatically. |
@@ -23,6 +23,13 @@
 
 ### As a .NET global tool
 
+### As an npm package
+
+```bash
+npm install -g @slaveoftime/wechat-relay
+wechat-relay          # runs the bundled native binary
+```
+
 ```bash
 dotnet tool install -g wechat-relay
 wechat-relay          # prints usage
@@ -30,7 +37,7 @@ wechat-relay          # prints usage
 
 ### Or grab a native binary
 
-Download from [Releases](https://github.com/slaveoftime/open-relay-wechat-hook/releases):
+Download from [Releases](https://github.com/slaveoftime/wechat-relay/releases):
 
 | Platform | Asset |
 |----------|-------|
@@ -57,7 +64,7 @@ wechat-relay send --text "Hello from CLI!"
 
 ### `login`
 
-QR code login. Credentials saved to `appsettings.Local.json` (gitignored) and session cache — **no expiry, ever**, until the server-side session actually expires.
+QR code login. Credentials and reply-session tokens are saved in a local JSON session file under your application data directory. They stay available until the server-side session actually expires.
 
 ```
 wechat-relay login           # use cached or start QR flow
@@ -176,45 +183,45 @@ The `{payload}` placeholder is replaced with the raw JSON. Omit it to pass the J
 
 ```
 ┌─────────────────────────────────────────────┐
-│                 wechat-relay                 │
-│                                              │
-│  ┌──────────┐    ┌───────────────────────┐  │
-│  │  listen   │───▶│   Inbound Messages    │  │
-│  │ (long-    │    │                       │  │
+│                 wechat-relay                │
+│                                             │
+│  ┌───────────┐     ┌────────────────────┐   │
+│  │  listen   │───▶│   Inbound Messages  │   │
+│  │ (long-    │    │                      │  │
 │  │  poll)    │    │  ┌──┐ ┌──┐ ┌──┐      │  │
-│  └──────────┘    │  │M1│ │M2│ │M3│ ...   │  │
-│                  │  └┬─┘ └┬─┘ └┬─┘      │  │
-│                  └───┼────┼────┼─────────┘  │
-│                      │    │    │            │
-│              ┌───────┘    │    └──────────┐ │
-│              ▼            ▼               ▼ │
-│  ┌──────────────────────────────────────┐  │
-│  │       Persistent Queue (JSONL)       │  │
-│  └──────────────────┬───────────────────┘  │
-│                     │                      │
-│              ┌──────▼───────┐              │
-│              │  Hook Runner │              │
-│  ┌───────────▶│  (async)    │──────────┐  │
-│  │            └─────────────┘          │  │
-│  │                                      │  │
-│  │  cmd: echo / node / curl / python    │  │
-│  └──────────────────────────────────────┘  │
-│                                              │
-│  ┌──────────────────────────────────────┐  │
-│  │  Session Cache (appsettings.Local +  │  │
-│  │  ~/.wechat-relay/session.json)       │  │
-│  │  - credentials (no TTL)              │  │
-│  │  - context tokens                    │  │
-│  │  - pending message queue             │  │
-│  └──────────────────────────────────────┘  │
+│  └───────────┘    │  │M1│ │M2│ │M3│ ...  │  │
+│                   │  └┬─┘ └┬─┘ └┬─┘      │  │
+│                   └───┼────┼────┼────────┘  │
+│                       │    │    │           │
+│               ┌───────┘    │    └─────┐     │
+│               ▼            ▼          ▼     │
+│  ┌──────────────────────────────────────┐   │
+│  │       Persistent Queue (JSONL)       │   │
+│  └──────────────────┬───────────────────┘   │
+│                     │                       │
+│              ┌──────▼───────┐               │
+│              │  Hook Runner │               │
+│  ┌─────────▶ │  (async)     │──────────┐   │
+│  │           └──────────────┘           │   │
+│  │                                      │   │
+│  │  cmd: echo / node / curl / python    │   │
+│  └──────────────────────────────────────┘   │
+│                                             │
+│  ┌──────────────────────────────────────┐   │
+│  │      Local Session Store             │   │
+│  │   (%APPDATA%/wechat-relay)           │   │
+│  │  - login credentials                 │   │
+│  │  - reply context tokens              │   │
+│  │  - session-state.json                │   │
+│  └──────────────────────────────────────┘   │
 └─────────────────────────────────────────────┘
 ```
 
 ## Build from Source
 
 ```bash
-git clone https://github.com/slaveoftime/open-relay-wechat-hook.git
-cd open-relay-wechat-hook
+git clone https://github.com/slaveoftime/wechat-relay.git
+cd wechat-relay/WeChatRelay
 
 # Debug build
 dotnet build
@@ -226,8 +233,8 @@ dotnet build -c Release
 dotnet pack -c Release
 
 # Native AOT (single file, no runtime needed)
-dotnet publish -c Release -r linux-x64 --self-contained -p:PublishAot=true
 dotnet publish -c Release -r win-x64   --self-contained -p:PublishAot=true
+dotnet publish -c Release -r linux-x64 --self-contained -p:PublishAot=true
 dotnet publish -c Release -r osx-arm64 --self-contained -p:PublishAot=true
 ```
 

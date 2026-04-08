@@ -1,0 +1,192 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  # ── NuGet package ──
+  publish-package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Derive version
+        id: version
+        shell: bash
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack tool
+        run: >
+          dotnet pack ./WeChatRelay/WeChatRelay.csproj
+          --configuration Release
+          --output ./artifacts/packages
+          -p:ContinuousIntegrationBuild=true
+          -p:Version=${{ steps.version.outputs.value }}
+
+      - name: Publish to NuGet
+        run: >
+          dotnet nuget push ./artifacts/packages/*.nupkg
+          --api-key ${{ secrets.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+        shell: pwsh
+
+  # ── Native AOT standalone binaries ──
+  publish-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+            archive: tar.gz
+          - os: windows-latest
+            rid: win-x64
+            archive: zip
+          - os: macos-14
+            rid: osx-arm64
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Derive version
+        id: version
+        shell: bash
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish native binary
+        run: >
+          dotnet publish ./WeChatRelay/WeChatRelay.csproj
+          --configuration Release
+          --runtime ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishAot=true
+          -p:ContinuousIntegrationBuild=true
+          -p:Version=${{ steps.version.outputs.value }}
+          --output ./artifacts/publish/${{ matrix.rid }}
+
+      - name: Archive
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.value }}"
+          $rid = "${{ matrix.rid }}"
+          $archive = "${{ matrix.archive }}"
+          $asset = "wechat-relay-${version}-${rid}"
+          $publishDir = "./artifacts/publish/${rid}"
+          $ext = if ($archive -eq "zip") { ".exe" } else { "" }
+          $binaryPath = Join-Path $publishDir "wechat-relay${ext}"
+          $configPath = Join-Path $publishDir "appsettings.json"
+
+          if (!(Test-Path $binaryPath)) { throw "Binary not found at '$binaryPath'" }
+          if (!(Test-Path $configPath)) { throw "Config not found at '$configPath'" }
+
+          if ($archive -eq "zip") {
+            Compress-Archive -Path @($binaryPath, $configPath) -DestinationPath "./artifacts/${asset}.zip"
+          } else {
+            tar -czf "./artifacts/${asset}.tar.gz" -C $publishDir "wechat-relay${ext}" "appsettings.json"
+          }
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wechat-relay-${{ matrix.rid }}
+          path: |
+            ./artifacts/*.zip
+            ./artifacts/*.tar.gz
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ./artifacts/*.zip
+            ./artifacts/*.tar.gz
+
+  publish-npm:
+    runs-on: ubuntu-latest
+    needs: publish-native
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Derive version
+        id: version
+        shell: bash
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set npm package version
+        working-directory: ./npm
+        run: npm version "${{ steps.version.outputs.value }}" --no-git-tag-version
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Bundle release binaries into npm package
+        shell: bash
+        run: |
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TMP_DIR"' EXIT
+
+          LINUX_TAR="$(find dist -type f -name 'wechat-relay-*-linux-x64.tar.gz' -print -quit)"
+          MACOS_TAR="$(find dist -type f -name 'wechat-relay-*-osx-arm64.tar.gz' -print -quit)"
+          WINDOWS_ZIP="$(find dist -type f -name 'wechat-relay-*-win-x64.zip' -print -quit)"
+
+          test -n "$LINUX_TAR"
+          test -n "$MACOS_TAR"
+          test -n "$WINDOWS_ZIP"
+
+          tar -xzf "$LINUX_TAR" -C "$TMP_DIR" wechat-relay
+          mv "$TMP_DIR/wechat-relay" npm/bin/wechat-relay-linux-x64
+
+          tar -xzf "$MACOS_TAR" -C "$TMP_DIR" wechat-relay
+          mv "$TMP_DIR/wechat-relay" npm/bin/wechat-relay-darwin-arm64
+
+          unzip -j "$WINDOWS_ZIP" wechat-relay.exe -d "$TMP_DIR"
+          mv "$TMP_DIR/wechat-relay.exe" npm/bin/wechat-relay-win32-x64.exe
+
+          chmod +x npm/bin/wechat-relay-linux-x64 npm/bin/wechat-relay-darwin-arm64
+
+          test -f npm/bin/wechat-relay.js
+          test -f npm/bin/wechat-relay-linux-x64
+          test -f npm/bin/wechat-relay-darwin-arm64
+          test -f npm/bin/wechat-relay-win32-x64.exe
+
+      - name: Copy README to npm package
+        run: cp README.md npm/README.md
+
+      - name: Publish to npm
+        working-directory: ./npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public

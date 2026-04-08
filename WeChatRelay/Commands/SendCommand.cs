@@ -1,48 +1,48 @@
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console;
-using Spectre.Console.Cli;
+using WeChatRelay.Models;
 using WeChatRelay.Services;
 
 namespace WeChatRelay.Commands;
 
-public class SendCommand : AsyncCommand<SendCommand.Settings>
+public sealed class SendCommandSettings : VerboseCommandSettings
 {
-    public class Settings : CommandSettings
-    {
-        [CommandArgument(0, "[target]")]
-        public string? Target { get; init; }
+    public string? Target { get; init; }
 
-        [CommandOption("--text")]
-        public string? Text { get; init; }
+    public string? Text { get; init; }
+}
 
-        [CommandOption("--verbose")]
-        public bool Verbose { get; init; }
-    }
-
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+public static class SendCommand
+{
+    public static async Task<int> ExecuteAsync(SendCommandSettings settings, CancellationToken cancellationToken)
     {
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, cancellationToken);
 
-        var services = new ServiceCollection();
-        Program.ConfigureServices(services, settings.Verbose);
-        var provider = services.BuildServiceProvider();
+        using var provider = Program.CreateServiceProvider(settings.Verbose);
 
         var weChat = provider.GetRequiredService<IWeChatService>();
-        var cache = provider.GetRequiredService<ISessionCache>();
+        var contextTokenStore = provider.GetRequiredService<IContextTokenStore>();
+        var config = provider.GetRequiredService<WeChatConfig>();
 
-        return await ExecuteAsync(weChat, cache, settings, cts.Token);
+        return await ExecuteCoreAsync(weChat, contextTokenStore, config, settings, linkedCts.Token);
     }
 
-    private static async Task<int> ExecuteAsync(IWeChatService weChat, ISessionCache cache, Settings settings, CancellationToken ct)
+    private static async Task<int> ExecuteCoreAsync(
+        IWeChatService weChat,
+        IContextTokenStore contextTokenStore,
+        WeChatConfig config,
+        SendCommandSettings settings,
+        CancellationToken ct)
     {
-        if (cache.Load() is not { BotToken: not null })
+        if (!weChat.IsLoggedIn)
         {
             AnsiConsole.MarkupLine("[bold red]⚠ Not logged in.[/] Run [cyan]wechat-relay login[/] first.");
             return 1;
         }
 
-        var toUser = string.IsNullOrEmpty(settings.Target) ? cache.Load()?.UserId : settings.Target;
+        var toUser = string.IsNullOrEmpty(settings.Target) ? config.UserId : settings.Target;
 
         if (string.IsNullOrEmpty(toUser))
         {
@@ -57,7 +57,7 @@ public class SendCommand : AsyncCommand<SendCommand.Settings>
             return 1;
         }
 
-        var contextToken = cache.GetContextToken(toUser);
+        var contextToken = contextTokenStore.GetContextToken(toUser);
         var result = await weChat.SendTextAsync(toUser, message, contextToken: contextToken);
 
         if (result.Ret == 0)
