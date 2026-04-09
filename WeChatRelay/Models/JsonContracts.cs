@@ -8,7 +8,7 @@ internal sealed class GetUpdatesRequest
     public string GetUpdatesBuf { get; init; } = string.Empty;
 }
 
-internal sealed class HookPayload
+public sealed class HookPayload
 {
     [JsonPropertyName("seq")]
     public long? Seq { get; init; }
@@ -44,7 +44,7 @@ internal sealed class HookPayload
     public string? ContextToken { get; init; }
 }
 
-internal sealed class HookPayloadItem
+public sealed class HookPayloadItem
 {
     [JsonPropertyName("item_type")]
     public int ItemType { get; init; }
@@ -55,17 +55,8 @@ internal sealed class HookPayloadItem
     [JsonPropertyName("text")]
     public string? Text { get; init; }
 
-    [JsonPropertyName("preview_url")]
-    public string? PreviewUrl { get; init; }
-
-    [JsonPropertyName("download_url")]
-    public string? DownloadUrl { get; init; }
-
-    [JsonPropertyName("encrypt_query_param")]
-    public string? EncryptQueryParam { get; init; }
-
-    [JsonPropertyName("aes_key")]
-    public string? AesKey { get; init; }
+    [JsonPropertyName("local_path")]
+    public string? LocalPath { get; init; }
 
     [JsonPropertyName("encode_type")]
     public int? EncodeType { get; init; }

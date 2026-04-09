@@ -23,7 +23,7 @@ public class HookConfig
     public string? WorkingDirectory { get; init; }
 }
 
-public class HookRunner(HookConfig hookCfg, ILogger<HookRunner> log) : IHookRunner
+public class HookRunner(HookConfig hookCfg, IInboundMediaStore inboundMediaStore, ILogger<HookRunner> log) : IHookRunner
 {
     private readonly ConcurrentQueue<InboundMessage> _queue = new();
     private readonly string _queueFile = Path.Combine(
@@ -91,6 +91,8 @@ public class HookRunner(HookConfig hookCfg, ILogger<HookRunner> log) : IHookRunn
 
     private async Task InvokeHookAsync(InboundMessage msg, CancellationToken ct)
     {
+        var items = await inboundMediaStore.BuildHookItemsAsync(msg, ct);
+
         // Build the hook payload JSON
         var json = JsonSerializer.Serialize(new HookPayload
         {
@@ -103,7 +105,7 @@ public class HookRunner(HookConfig hookCfg, ILogger<HookRunner> log) : IHookRunn
             MessageType = msg.MessageType,
             Text = MessageInspector.ExtractText(msg),
             Summary = MessageInspector.Describe(msg),
-            Items = MessageInspector.BuildHookItems(msg),
+            Items = items,
             ContextToken = msg.ContextToken
         }, WeChatJsonContext.Default.HookPayload);
         var escaped = json.Replace("\"", "\\\"");

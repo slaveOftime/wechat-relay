@@ -50,9 +50,11 @@ public static class Program
         services.AddSingleton<SessionStore>();
         services.AddSingleton<ILoginSessionStore>(sp => sp.GetRequiredService<SessionStore>());
         services.AddSingleton<IContextTokenStore>(sp => sp.GetRequiredService<SessionStore>());
+        services.AddHttpClient();
         services.AddHttpClient<IWeChatService, WeChatService>();
 
         services.AddSingleton(BuildHookConfig(config.GetSection("Hook"), hookCommandOverride));
+        services.AddSingleton<IInboundMediaStore, InboundMediaStore>();
         services.AddSingleton<IHookRunner, HookRunner>();
     }
 

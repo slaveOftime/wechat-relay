@@ -81,7 +81,7 @@ wechat-relay listen
 
 **Hook payload (echoed to console):**
 ```json
-{"seq":42,"message_id":...,"from_user_id":"o9cq8...","to_user_id":"...","create_time_ms":...,"session_id":"","message_type":1,"text":"hello","summary":"text=\"hello\" [image]","items":[{"item_type":2,"kind":"image","download_url":"https://novac2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=...","encrypt_query_param":"...","aes_key":"..."}],"context_token":"AARz..."}
+{"seq":42,"message_id":...,"from_user_id":"o9cq8...","to_user_id":"...","create_time_ms":...,"session_id":"","message_type":1,"text":"hello","summary":"text=\"hello\" [image]","items":[{"item_type":2,"kind":"image","local_path":"C:\\Users\\you\\AppData\\Roaming\\wechat-relay\\inbound-media\\20260409\\msg-7447467781622590088-42\\00-image-image.jpg"}],"context_token":"AARz..."}
 ```
 
 **Step D — Ctrl+C to stop.**

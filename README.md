@@ -148,10 +148,7 @@ Minimal example:
     {
       "item_type": 2,
       "kind": "image",
-      "preview_url": "https://...",
-      "download_url": "https://novac2c.cdn.weixin.qq.com/c2c/download?...",
-      "encrypt_query_param": "...",
-      "aes_key": "..."
+      "local_path": "C:\\Users\\you\\AppData\\Roaming\\wechat-relay\\inbound-media\\20260409\\msg-7447467781622590088-42\\00-image-image.jpg"
     }
   ],
   "context_token": "AARzJWAFAAABAAAA..."
@@ -162,6 +159,7 @@ Storage lives under your application data directory:
 
 - `session-state.json` stores login state and cached context tokens
 - `pending-messages.jsonl` stores queued hook work for crash recovery
+- `inbound-media/` stores downloaded inbound images, audio, files, and video before the hook runs
 
 If the process dies after receipt but before hook execution, the next `listen` run drains the queue and replays the pending payloads.
 
