@@ -37,10 +37,16 @@ wechat-relay send --text "test"
 # Specific target
 wechat-relay send o9cq8...@im.wechat --text "test"
 
+# Image
+wechat-relay send o9cq8...@im.wechat --image .\sample.jpg
+
+# Audio / voice
+wechat-relay send o9cq8...@im.wechat --audio .\sample.silk --audio-playtime-ms 4210
+
 # Via stdin
 echo hello | wechat-relay send
 ```
-**Expected:** `✓ Sent.` or error with hint about context token.
+**Expected:** `✓ Message sent...`, `✓ Image sent...`, or `✓ Audio sent...`; otherwise an error with hint about context token.
 
 ### 5. Listen + Hook (requires inbound message)
 
@@ -69,11 +75,13 @@ wechat-relay listen
 **Expected output:**
 ```
 [15:23:01] seq=42 from=o9cq8...@im.wechat type=1 text="hello"
+[15:23:15] seq=43 from=o9cq8...@im.wechat type=1 [image]
+[15:23:22] seq=44 from=o9cq8...@im.wechat type=1 text="我下午三点到。" [audio 4210ms]
 ```
 
 **Hook payload (echoed to console):**
 ```json
-{"seq":42,"message_id":...,"from_user_id":"o9cq8...","to_user_id":"...","create_time_ms":...,"session_id":"","message_type":1,"text":"hello","context_token":"AARz..."}
+{"seq":42,"message_id":...,"from_user_id":"o9cq8...","to_user_id":"...","create_time_ms":...,"session_id":"","message_type":1,"text":"hello","summary":"text=\"hello\" [image]","items":[{"item_type":2,"kind":"image","local_path":"C:\\Users\\you\\AppData\\Roaming\\wechat-relay\\inbound-media\\20260409\\msg-7447467781622590088-42\\00-image-image.jpg"}],"context_token":"AARz..."}
 ```
 
 **Step D — Ctrl+C to stop.**

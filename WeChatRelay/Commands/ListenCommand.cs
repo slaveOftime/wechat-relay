@@ -62,9 +62,11 @@ public static class ListenCommand
                 var seq = msg.Seq?.ToString() ?? "?";
                 var fromUserId = msg.FromUserId ?? "<unknown>";
                 var messageType = msg.MessageType?.ToString() ?? "?";
+                var summary = MessageInspector.Describe(msg);
+                var suffix = string.IsNullOrWhiteSpace(summary) ? string.Empty : $" {Markup.Escape(summary)}";
 
                 AnsiConsole.MarkupLine(
-                    $"[grey][[{Markup.Escape(time)}]][/] [bold]{Markup.Escape(seq)}[/] [blue]{Markup.Escape(fromUserId)}[/] [grey]type={Markup.Escape(messageType)}[/]");
+                    $"[grey][[{Markup.Escape(time)}]][/] [bold]{Markup.Escape(seq)}[/] [blue]{Markup.Escape(fromUserId)}[/] [grey]type={Markup.Escape(messageType)}[/]{suffix}");
 
                 if (!string.IsNullOrEmpty(msg.FromUserId) && !string.IsNullOrEmpty(msg.ContextToken))
                     contextTokenStore.SetContextToken(msg.FromUserId, msg.ContextToken);
