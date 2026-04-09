@@ -19,7 +19,7 @@ public static class Program
         return BuildCommandLine().Parse(commandLineArgs).Invoke();
     }
 
-    public static void ConfigureServices(IServiceCollection services, bool verbose = false)
+    public static void ConfigureServices(IServiceCollection services, bool verbose = false, string? hookCommandOverride = null)
     {
         var config = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
@@ -52,14 +52,14 @@ public static class Program
         services.AddSingleton<IContextTokenStore>(sp => sp.GetRequiredService<SessionStore>());
         services.AddHttpClient<IWeChatService, WeChatService>();
 
-        services.AddSingleton(BuildHookConfig(config.GetSection("Hook")));
+        services.AddSingleton(BuildHookConfig(config.GetSection("Hook"), hookCommandOverride));
         services.AddSingleton<IHookRunner, HookRunner>();
     }
 
-    public static ServiceProvider CreateServiceProvider(bool verbose = false)
+    public static ServiceProvider CreateServiceProvider(bool verbose = false, string? hookCommandOverride = null)
     {
         var services = new ServiceCollection();
-        ConfigureServices(services, verbose);
+        ConfigureServices(services, verbose, hookCommandOverride);
         return services.BuildServiceProvider();
     }
 
@@ -72,10 +72,10 @@ public static class Program
             ToUsers = section[nameof(WeChatOptions.ToUsers)]
         };
 
-    private static HookConfig BuildHookConfig(IConfigurationSection section) =>
+    private static HookConfig BuildHookConfig(IConfigurationSection section, string? hookCommandOverride) =>
         new()
         {
-            Command = section[nameof(HookConfig.Command)] ?? "echo",
+            Command = hookCommandOverride ?? section[nameof(HookConfig.Command)] ?? "echo",
             WorkingDirectory = section[nameof(HookConfig.WorkingDirectory)]
         };
 
@@ -102,12 +102,18 @@ public static class Program
             }, CancellationToken.None).GetAwaiter().GetResult());
 
         var listenVerboseOption = CreateVerboseOption();
+        var listenHookOption = new Option<string?>("--hook")
+        {
+            Description = "Override Hook:Command for this run"
+        };
         var listenCommand = new Command("listen", "Run listener until Ctrl+C");
         listenCommand.Options.Add(listenVerboseOption);
+        listenCommand.Options.Add(listenHookOption);
         listenCommand.SetAction(parseResult =>
             ListenCommand.ExecuteAsync(new ListenCommandSettings
             {
-                Verbose = parseResult.GetValue(listenVerboseOption)
+                Verbose = parseResult.GetValue(listenVerboseOption),
+                HookCommand = parseResult.GetValue(listenHookOption)
             }, CancellationToken.None).GetAwaiter().GetResult());
 
         var listSendToVerboseOption = CreateVerboseOption();

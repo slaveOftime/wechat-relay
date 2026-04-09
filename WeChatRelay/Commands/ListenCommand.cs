@@ -6,17 +6,24 @@ namespace WeChatRelay.Commands;
 
 public sealed class ListenCommandSettings : VerboseCommandSettings
 {
+    public string? HookCommand { get; init; }
 }
 
 public static class ListenCommand
 {
     public static async Task<int> ExecuteAsync(ListenCommandSettings settings, CancellationToken cancellationToken)
     {
+        if (settings.HookCommand is not null && string.IsNullOrWhiteSpace(settings.HookCommand))
+        {
+            AnsiConsole.MarkupLine("[bold red]⚠ Invalid hook command.[/] Pass a non-empty value to [cyan]--hook[/].");
+            return 1;
+        }
+
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, cancellationToken);
 
-        using var provider = Program.CreateServiceProvider(settings.Verbose);
+        using var provider = Program.CreateServiceProvider(settings.Verbose, settings.HookCommand);
 
         var weChat = provider.GetRequiredService<IWeChatService>();
         var hookRunner = provider.GetRequiredService<IHookRunner>();

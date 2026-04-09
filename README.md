@@ -111,6 +111,8 @@ Press Ctrl+C to stop.
 
 Show all users you can send messages to.
 
+> Currently, it only support to send to itself.
+
 ```bash
 wechat-relay list-send-to
 ```
