@@ -233,6 +233,8 @@ dotnet build -c Release
 
 # Pack as NuGet tool
 dotnet pack -c Release
+# Install from local package
+dotnet tool install -g --source ./bin/Release/ wechat-relay
 
 # Native AOT (single file, no runtime needed)
 dotnet publish -c Release -r win-x64   --self-contained -p:PublishAot=true
