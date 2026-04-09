@@ -10,6 +10,18 @@ public sealed class SendCommandSettings : VerboseCommandSettings
     public string? Target { get; init; }
 
     public string? Text { get; init; }
+
+    public string? ImagePath { get; init; }
+
+    public string? AudioPath { get; init; }
+
+    public string? AudioFormat { get; init; }
+
+    public int? AudioSampleRate { get; init; }
+
+    public int? AudioBitsPerSample { get; init; }
+
+    public int? AudioPlaytimeMs { get; init; }
 }
 
 public static class SendCommand
@@ -50,19 +62,70 @@ public static class SendCommand
             return 1;
         }
 
-        var message = settings.Text ?? Console.ReadLine() ?? "";
-        if (string.IsNullOrEmpty(message))
+        var selectedInputCount =
+            (string.IsNullOrWhiteSpace(settings.Text) ? 0 : 1) +
+            (string.IsNullOrWhiteSpace(settings.ImagePath) ? 0 : 1) +
+            (string.IsNullOrWhiteSpace(settings.AudioPath) ? 0 : 1);
+        if (selectedInputCount > 1)
         {
-            AnsiConsole.MarkupLine("[bold red]⚠ No message.[/] Use [cyan]--text <msg>[/] or pipe via stdin.");
+            AnsiConsole.MarkupLine("[bold red]⚠ Pick one payload type.[/] Use only one of [cyan]--text[/], [cyan]--image[/], or [cyan]--audio[/].");
             return 1;
         }
 
         var contextToken = contextTokenStore.GetContextToken(toUser);
-        var result = await weChat.SendTextAsync(toUser, message, contextToken: contextToken);
+        SendMessageResponse result;
+        var sentLabel = "Message";
+
+        if (!string.IsNullOrWhiteSpace(settings.ImagePath))
+        {
+            if (!File.Exists(settings.ImagePath))
+            {
+                AnsiConsole.MarkupLine($"[bold red]⚠ Image file not found:[/] [grey]{Markup.Escape(settings.ImagePath)}[/]");
+                return 1;
+            }
+
+            result = await weChat.SendImageAsync(toUser, settings.ImagePath, contextToken: contextToken);
+            sentLabel = "Image";
+        }
+        else if (!string.IsNullOrWhiteSpace(settings.AudioPath))
+        {
+            if (!File.Exists(settings.AudioPath))
+            {
+                AnsiConsole.MarkupLine($"[bold red]⚠ Audio file not found:[/] [grey]{Markup.Escape(settings.AudioPath)}[/]");
+                return 1;
+            }
+
+            var encodeType = ResolveAudioEncodeType(settings.AudioPath, settings.AudioFormat, out var encodeTypeError);
+            if (encodeTypeError is not null)
+            {
+                AnsiConsole.MarkupLine($"[bold red]⚠ Invalid audio format:[/] {Markup.Escape(encodeTypeError)}");
+                return 1;
+            }
+
+            result = await weChat.SendAudioAsync(toUser, settings.AudioPath, new AudioSendOptions
+            {
+                EncodeType = encodeType,
+                SampleRate = settings.AudioSampleRate,
+                BitsPerSample = settings.AudioBitsPerSample,
+                PlaytimeMs = settings.AudioPlaytimeMs
+            }, contextToken: contextToken);
+            sentLabel = "Audio";
+        }
+        else
+        {
+            var message = settings.Text ?? Console.ReadLine() ?? "";
+            if (string.IsNullOrEmpty(message))
+            {
+                AnsiConsole.MarkupLine("[bold red]⚠ No message.[/] Use [cyan]--text <msg>[/], [cyan]--image <path>[/], [cyan]--audio <path>[/], or pipe text via stdin.");
+                return 1;
+            }
+
+            result = await weChat.SendTextAsync(toUser, message, contextToken: contextToken);
+        }
 
         if (result.Ret == 0)
         {
-            AnsiConsole.MarkupLine($"[bold green]✓ Message sent to {toUser}[/]");
+            AnsiConsole.MarkupLine($"[bold green]✓ {sentLabel} sent to {toUser}[/]");
             return 0;
         }
 
@@ -73,5 +136,45 @@ public static class SendCommand
             AnsiConsole.MarkupLine("  Run [cyan]wechat-relay listen[/] and have the user message you first.");
         }
         return 1;
+    }
+
+    private static int? ResolveAudioEncodeType(string audioPath, string? audioFormat, out string? error)
+    {
+        error = null;
+
+        var format = audioFormat;
+        if (string.IsNullOrWhiteSpace(format))
+        {
+            var extension = Path.GetExtension(audioPath);
+            format = string.IsNullOrWhiteSpace(extension) ? null : extension.TrimStart('.');
+        }
+
+        if (string.IsNullOrWhiteSpace(format))
+        {
+            return null;
+        }
+
+        return format.Trim().ToLowerInvariant() switch
+        {
+            "pcm" => 1,
+            "wav" => 1,
+            "adpcm" => 2,
+            "feature" => 3,
+            "speex" => 4,
+            "spx" => 4,
+            "amr" => 5,
+            "sil" => 6,
+            "silk" => 6,
+            "mp3" => 7,
+            "ogg" => 8,
+            "ogg-speex" => 8,
+            _ => SetError($"Unsupported format '{format}'. Use pcm, wav, adpcm, feature, speex, amr, silk, mp3, or ogg.", out error)
+        };
+    }
+
+    private static int? SetError(string message, out string? error)
+    {
+        error = message;
+        return null;
     }
 }

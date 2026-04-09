@@ -134,11 +134,42 @@ public static class Program
         {
             Description = "Message text. If omitted, reads from stdin"
         };
+        var imageOption = new Option<string?>("--image")
+        {
+            Description = "Send an image from a local file path"
+        };
+        var audioOption = new Option<string?>("--audio")
+        {
+            Description = "Send a voice/audio message from a local file path"
+        };
+        audioOption.Aliases.Add("--voice");
+        var audioFormatOption = new Option<string?>("--audio-format")
+        {
+            Description = "Optional audio encoding hint: pcm, wav, adpcm, feature, speex, amr, silk, mp3, or ogg"
+        };
+        var audioSampleRateOption = new Option<int?>("--audio-sample-rate")
+        {
+            Description = "Optional audio sample rate in Hz"
+        };
+        var audioBitsPerSampleOption = new Option<int?>("--audio-bits-per-sample")
+        {
+            Description = "Optional audio bit depth"
+        };
+        var audioPlaytimeOption = new Option<int?>("--audio-playtime-ms")
+        {
+            Description = "Optional audio duration in milliseconds"
+        };
         var sendVerboseOption = CreateVerboseOption();
-        var sendCommand = new Command("send", "Send a text message")
+        var sendCommand = new Command("send", "Send a text, image, or audio message")
         {
             targetArgument,
             textOption,
+            imageOption,
+            audioOption,
+            audioFormatOption,
+            audioSampleRateOption,
+            audioBitsPerSampleOption,
+            audioPlaytimeOption,
             sendVerboseOption
         };
         sendCommand.SetAction(parseResult =>
@@ -146,6 +177,12 @@ public static class Program
             {
                 Target = parseResult.GetValue(targetArgument),
                 Text = parseResult.GetValue(textOption),
+                ImagePath = parseResult.GetValue(imageOption),
+                AudioPath = parseResult.GetValue(audioOption),
+                AudioFormat = parseResult.GetValue(audioFormatOption),
+                AudioSampleRate = parseResult.GetValue(audioSampleRateOption),
+                AudioBitsPerSample = parseResult.GetValue(audioBitsPerSampleOption),
+                AudioPlaytimeMs = parseResult.GetValue(audioPlaytimeOption),
                 Verbose = parseResult.GetValue(sendVerboseOption)
             }, CancellationToken.None).GetAwaiter().GetResult());
 

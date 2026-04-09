@@ -101,7 +101,9 @@ public class HookRunner(HookConfig hookCfg, ILogger<HookRunner> log) : IHookRunn
             CreateTimeMs = msg.CreateTimeMs,
             SessionId = msg.SessionId,
             MessageType = msg.MessageType,
-            Text = ExtractText(msg),
+            Text = MessageInspector.ExtractText(msg),
+            Summary = MessageInspector.Describe(msg),
+            Items = MessageInspector.BuildHookItems(msg),
             ContextToken = msg.ContextToken
         }, WeChatJsonContext.Default.HookPayload);
         var escaped = json.Replace("\"", "\\\"");
@@ -136,11 +138,5 @@ public class HookRunner(HookConfig hookCfg, ILogger<HookRunner> log) : IHookRunn
             log.LogInformation("Hook completed: seq={Seq}", msg.Seq);
         else
             log.LogWarning("Hook exited {Code} for seq={Seq}: {Error}", process.ExitCode, msg.Seq, error.Trim());
-    }
-
-    private static string ExtractText(InboundMessage msg)
-    {
-        var texts = msg.ItemList.Where(i => i.Type == 1 && i.TextItem != null).Select(i => i.TextItem!.Text);
-        return string.Join(" ", texts);
     }
 }

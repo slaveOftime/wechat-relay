@@ -1,6 +1,9 @@
 using Microsoft.Extensions.Logging;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using WeChatRelay.Models;
 using WeChatRelay.Serialization;
 
@@ -12,6 +15,8 @@ public interface IWeChatService
     Task<QrStartResponse> StartQrLoginAsync(CancellationToken ct = default);
     Task<(bool Connected, string? BotToken, string? AccountId, string? BaseUrl, string? UserId, string Message)> WaitForQrConfirmAsync(string sessionKey, CancellationToken ct = default);
     Task<SendMessageResponse> SendTextAsync(string toUserId, string content, CancellationToken ct = default, string? contextToken = null);
+    Task<SendMessageResponse> SendImageAsync(string toUserId, string filePath, CancellationToken ct = default, string? contextToken = null);
+    Task<SendMessageResponse> SendAudioAsync(string toUserId, string filePath, AudioSendOptions options, CancellationToken ct = default, string? contextToken = null);
     Task StartReceivingAsync(Func<InboundMessage, Task> onMessage, CancellationToken ct = default);
     List<SendToCandidate> GetSendToCandidates();
 }
@@ -24,6 +29,7 @@ public class WeChatService(
     ILogger<WeChatService> log) : IWeChatService
 {
     private const string DefaultBaseUrl = "https://ilinkai.weixin.qq.com/";
+    private const string CdnBaseUrl = "https://novac2c.cdn.weixin.qq.com/c2c/";
     private const int SessionExpiredErrCode = -14;
     private static readonly TimeSpan QrPollTimeout = TimeSpan.FromSeconds(35);
     private static readonly TimeSpan QrLoginTimeout = TimeSpan.FromMinutes(8);
@@ -79,6 +85,60 @@ public class WeChatService(
     }
 
     public async Task<SendMessageResponse> SendTextAsync(string toUserId, string content, CancellationToken ct = default, string? contextToken = null)
+        => await SendItemsAsync(toUserId,
+        [
+            new OutboundItem
+            {
+                Type = 1,
+                TextItem = new TextItemOut { Text = content }
+            }
+        ], ct, contextToken);
+
+    public async Task<SendMessageResponse> SendImageAsync(string toUserId, string filePath, CancellationToken ct = default, string? contextToken = null)
+    {
+        var payload = await File.ReadAllBytesAsync(filePath, ct);
+        var uploaded = await UploadMediaAsync(toUserId, payload, mediaType: 1, ct);
+
+        return await SendItemsAsync(toUserId,
+        [
+            new OutboundItem
+            {
+                Type = 2,
+                ImageItem = new ImageItemOut
+                {
+                    Media = uploaded.Media,
+                    MidSize = uploaded.CiphertextSize,
+                    HdSize = uploaded.CiphertextSize
+                }
+            }
+        ], ct, contextToken);
+    }
+
+    public async Task<SendMessageResponse> SendAudioAsync(string toUserId, string filePath, AudioSendOptions options, CancellationToken ct = default, string? contextToken = null)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        var payload = await File.ReadAllBytesAsync(filePath, ct);
+        var uploaded = await UploadMediaAsync(toUserId, payload, mediaType: 4, ct);
+
+        return await SendItemsAsync(toUserId,
+        [
+            new OutboundItem
+            {
+                Type = 3,
+                VoiceItem = new VoiceItemOut
+                {
+                    Media = uploaded.Media,
+                    EncodeType = options.EncodeType,
+                    BitsPerSample = options.BitsPerSample,
+                    SampleRate = options.SampleRate,
+                    Playtime = options.PlaytimeMs
+                }
+            }
+        ], ct, contextToken);
+    }
+
+    private async Task<SendMessageResponse> SendItemsAsync(string toUserId, IEnumerable<OutboundItem> itemList, CancellationToken ct, string? contextToken)
     {
         if (!IsLoggedIn)
             return new SendMessageResponse { Ret = -1, ErrMsg = "Not logged in" };
@@ -93,20 +153,16 @@ public class WeChatService(
                 MessageType = 2,
                 MessageState = 2,
                 ContextToken = contextToken,
-                ItemList = [new OutboundItem { Type = 1, TextItem = new TextItemOut { Text = content } }]
+                ItemList = itemList.ToList()
             }
         };
 
-        var json = JsonSerializer.Serialize(req, WeChatJsonContext.Default.SendMessageRequest);
-        var url = new Uri(new Uri(NormalizeBaseUrl(cfg.BaseUrl!)), "ilink/bot/sendmessage");
-
-        ApplyHeaders();
-        var resp = await http.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"), ct);
-        resp.EnsureSuccessStatusCode();
-
-        var respJson = await resp.Content.ReadAsStringAsync(ct);
-        var result = JsonSerializer.Deserialize(respJson, WeChatJsonContext.Default.SendMessageResponse)
-            ?? new SendMessageResponse { Ret = -1, ErrMsg = "Failed to parse response" };
+        var result = await PostJsonAsync(
+            new Uri(new Uri(NormalizeBaseUrl(cfg.BaseUrl!)), "ilink/bot/sendmessage"),
+            req,
+            WeChatJsonContext.Default.SendMessageRequest,
+            WeChatJsonContext.Default.SendMessageResponse,
+            ct) ?? new SendMessageResponse { Ret = -1, ErrMsg = "Failed to parse response" };
 
         if (result.Ret == SessionExpiredErrCode)
         {
@@ -116,6 +172,46 @@ public class WeChatService(
         if (result.Ret != 0) log.LogWarning("Send failed: {Ret} {Err}", result.Ret, result.ErrMsg);
 
         return result;
+    }
+
+    private async Task<UploadedMedia> UploadMediaAsync(string toUserId, byte[] payload, int mediaType, CancellationToken ct)
+    {
+        var aesKey = RandomNumberGenerator.GetBytes(16);
+        var aesKeyHex = Convert.ToHexString(aesKey).ToLowerInvariant();
+        var fileKey = Guid.NewGuid().ToString("N");
+        var ciphertext = EncryptAesEcb(payload, aesKey);
+
+        var uploadParams = await PostJsonAsync(
+            new Uri(new Uri(NormalizeBaseUrl(cfg.BaseUrl!)), "ilink/bot/getuploadurl"),
+            new GetUploadUrlRequest
+            {
+                AesKey = aesKeyHex,
+                FileKey = fileKey,
+                FileSize = ciphertext.Length,
+                MediaType = mediaType,
+                RawFileMd5 = ComputeMd5Hex(payload),
+                RawSize = payload.Length,
+                ToUserId = toUserId
+            },
+            WeChatJsonContext.Default.GetUploadUrlRequest,
+            WeChatJsonContext.Default.GetUploadUrlResponse,
+            ct);
+
+        var uploadParam = uploadParams?.UploadParam;
+        if (string.IsNullOrWhiteSpace(uploadParam))
+            throw new InvalidOperationException("Upload endpoint did not return upload parameters.");
+
+        var encryptedParam = await UploadToCdnAsync(uploadParam, fileKey, ciphertext, ct);
+        var encodedAesKey = Convert.ToBase64String(Encoding.ASCII.GetBytes(aesKeyHex));
+
+        return new UploadedMedia(
+            new CdnMedia
+            {
+                EncryptQueryParam = encryptedParam,
+                AesKey = encodedAesKey,
+                EncryptType = 1
+            },
+            ciphertext.Length);
     }
 
     public async Task StartReceivingAsync(Func<InboundMessage, Task> onMessage, CancellationToken ct = default)
@@ -200,6 +296,71 @@ public class WeChatService(
         http.DefaultRequestHeaders.Add("X-WECHAT-UIN", GenerateRandomUin());
     }
 
+    private async Task<TResponse?> PostJsonAsync<TRequest, TResponse>(
+        Uri url,
+        TRequest payload,
+        JsonTypeInfo<TRequest> requestTypeInfo,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(payload, requestTypeInfo);
+        ApplyHeaders();
+
+        var resp = await http.PostAsync(url, new StringContent(json, Encoding.UTF8, "application/json"), ct);
+        resp.EnsureSuccessStatusCode();
+
+        var respJson = await resp.Content.ReadAsStringAsync(ct);
+        return JsonSerializer.Deserialize(respJson, responseTypeInfo);
+    }
+
+    private async Task<string> UploadToCdnAsync(string uploadParam, string fileKey, byte[] ciphertext, CancellationToken ct)
+    {
+        http.DefaultRequestHeaders.Clear();
+
+        var uploadUrl = new Uri(new Uri(CdnBaseUrl),
+            $"upload?encrypted_query_param={Uri.EscapeDataString(uploadParam)}&filekey={Uri.EscapeDataString(fileKey)}");
+        using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl)
+        {
+            Content = new ByteArrayContent(ciphertext)
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+
+        var response = await http.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var detail = await response.Content.ReadAsStringAsync(ct);
+            throw new HttpRequestException($"CDN upload failed: {(int)response.StatusCode} {detail}");
+        }
+
+        if (response.Headers.TryGetValues("x-encrypted-param", out var values))
+        {
+            var headerValue = values.FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(headerValue))
+            {
+                return headerValue;
+            }
+        }
+
+        return uploadParam;
+    }
+
+    private static byte[] EncryptAesEcb(byte[] payload, byte[] key)
+    {
+        using var aes = Aes.Create();
+        aes.Mode = CipherMode.ECB;
+        aes.Padding = PaddingMode.PKCS7;
+        aes.Key = key;
+
+        using var encryptor = aes.CreateEncryptor();
+        return encryptor.TransformFinalBlock(payload, 0, payload.Length);
+    }
+
+    private static string ComputeMd5Hex(byte[] payload)
+    {
+        var hash = MD5.HashData(payload);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
     private async Task<QrStatusResponse> PollQrStatusAsync(string baseUrl, string qrcode, CancellationToken ct)
     {
         var url = new Uri(new Uri(baseUrl), $"ilink/bot/get_qrcode_status?qrcode={Uri.EscapeDataString(qrcode)}");
@@ -232,4 +393,6 @@ public class WeChatService(
         contextTokenStore.Clear();
         log.LogError(message);
     }
+
+    private sealed record UploadedMedia(CdnMedia Media, long CiphertextSize);
 }

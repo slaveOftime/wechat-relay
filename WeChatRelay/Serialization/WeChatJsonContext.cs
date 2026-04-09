@@ -13,6 +13,8 @@ namespace WeChatRelay.Serialization;
 [JsonSerializable(typeof(InboundMessage))]
 [JsonSerializable(typeof(QrStartResponse))]
 [JsonSerializable(typeof(QrStatusResponse))]
+[JsonSerializable(typeof(GetUploadUrlRequest))]
+[JsonSerializable(typeof(GetUploadUrlResponse))]
 [JsonSerializable(typeof(SendMessageRequest))]
 [JsonSerializable(typeof(SendMessageResponse))]
 internal partial class WeChatJsonContext : JsonSerializerContext
