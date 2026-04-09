@@ -158,6 +158,9 @@ jobs:
           TMP_DIR="$(mktemp -d)"
           trap 'rm -rf "$TMP_DIR"' EXIT
 
+          mkdir -p npm/bin
+          rm -f npm/bin/wechat-relay-linux-x64 npm/bin/wechat-relay-darwin-arm64 npm/bin/wechat-relay-win32-x64.exe
+
           LINUX_TAR="$(find dist -type f -name 'wechat-relay-*-linux-x64.tar.gz' -print -quit)"
           MACOS_TAR="$(find dist -type f -name 'wechat-relay-*-osx-arm64.tar.gz' -print -quit)"
           WINDOWS_ZIP="$(find dist -type f -name 'wechat-relay-*-win-x64.zip' -print -quit)"
