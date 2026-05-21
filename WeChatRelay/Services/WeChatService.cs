@@ -259,13 +259,27 @@ public class WeChatService(
                     }
                 }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (Exception ex) when (IsExpectedReceiveLoopCancellation(ex, ct)) { break; }
             catch (Exception ex)
             {
                 log.LogError(ex, "Receive loop error");
                 await Task.Delay(TimeSpan.FromSeconds(5), ct);
             }
         }
+    }
+
+    private static bool IsExpectedReceiveLoopCancellation(Exception ex, CancellationToken ct)
+    {
+        if (!ct.IsCancellationRequested)
+            return false;
+
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is OperationCanceledException or ObjectDisposedException)
+                return true;
+        }
+
+        return false;
     }
 
     public List<SendToCandidate> GetSendToCandidates()
