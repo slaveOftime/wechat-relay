@@ -22,6 +22,8 @@ public sealed class SendCommandSettings : VerboseCommandSettings
     public int? AudioBitsPerSample { get; init; }
 
     public int? AudioPlaytimeMs { get; init; }
+
+    public bool NoStore { get; init; }
 }
 
 public static class SendCommand
@@ -37,14 +39,16 @@ public static class SendCommand
         var weChat = provider.GetRequiredService<IWeChatService>();
         var contextTokenStore = provider.GetRequiredService<IContextTokenStore>();
         var config = provider.GetRequiredService<WeChatConfig>();
+        var historyStore = provider.GetRequiredService<IHistoryStore>();
 
-        return await ExecuteCoreAsync(weChat, contextTokenStore, config, settings, linkedCts.Token);
+        return await ExecuteCoreAsync(weChat, contextTokenStore, config, historyStore, settings, linkedCts.Token);
     }
 
     private static async Task<int> ExecuteCoreAsync(
         IWeChatService weChat,
         IContextTokenStore contextTokenStore,
         WeChatConfig config,
+        IHistoryStore historyStore,
         SendCommandSettings settings,
         CancellationToken ct)
     {
@@ -54,7 +58,18 @@ public static class SendCommand
             return 1;
         }
 
-        var toUser = string.IsNullOrEmpty(settings.Target) ? config.UserId : settings.Target;
+        var text = settings.Text;
+        var target = settings.Target;
+        if (text is null &&
+            string.IsNullOrWhiteSpace(settings.ImagePath) &&
+            string.IsNullOrWhiteSpace(settings.AudioPath) &&
+            ContainsTextEscape(target))
+        {
+            text = target;
+            target = null;
+        }
+
+        var toUser = string.IsNullOrEmpty(target) ? config.UserId : target;
 
         if (string.IsNullOrEmpty(toUser))
         {
@@ -63,7 +78,7 @@ public static class SendCommand
         }
 
         var selectedInputCount =
-            (string.IsNullOrWhiteSpace(settings.Text) ? 0 : 1) +
+            (string.IsNullOrWhiteSpace(text) ? 0 : 1) +
             (string.IsNullOrWhiteSpace(settings.ImagePath) ? 0 : 1) +
             (string.IsNullOrWhiteSpace(settings.AudioPath) ? 0 : 1);
         if (selectedInputCount > 1)
@@ -75,6 +90,7 @@ public static class SendCommand
         var contextToken = contextTokenStore.GetContextToken(toUser);
         SendMessageResponse result;
         var sentLabel = "Message";
+        SentHistoryData? historyEntry = null;
 
         if (!string.IsNullOrWhiteSpace(settings.ImagePath))
         {
@@ -86,6 +102,12 @@ public static class SendCommand
 
             result = await weChat.SendImageAsync(toUser, settings.ImagePath, contextToken: contextToken);
             sentLabel = "Image";
+            historyEntry = new SentHistoryData
+            {
+                ToUserId = toUser,
+                Kind = "image",
+                FilePath = settings.ImagePath
+            };
         }
         else if (!string.IsNullOrWhiteSpace(settings.AudioPath))
         {
@@ -102,6 +124,7 @@ public static class SendCommand
                 return 1;
             }
 
+            var audioFormat = ResolveAudioFormat(settings.AudioPath, settings.AudioFormat);
             result = await weChat.SendAudioAsync(toUser, settings.AudioPath, new AudioSendOptions
             {
                 EncodeType = encodeType,
@@ -110,10 +133,22 @@ public static class SendCommand
                 PlaytimeMs = settings.AudioPlaytimeMs
             }, contextToken: contextToken);
             sentLabel = "Audio";
+            historyEntry = new SentHistoryData
+            {
+                ToUserId = toUser,
+                Kind = "audio",
+                FilePath = settings.AudioPath,
+                AudioFormat = audioFormat,
+                AudioSampleRate = settings.AudioSampleRate,
+                AudioBitsPerSample = settings.AudioBitsPerSample,
+                AudioPlaytimeMs = settings.AudioPlaytimeMs
+            };
         }
         else
         {
-            var message = settings.Text ?? Console.ReadLine() ?? "";
+            var message = text is null
+                ? Console.ReadLine() ?? ""
+                : DecodeTextEscapes(text);
             if (string.IsNullOrEmpty(message))
             {
                 AnsiConsole.MarkupLine("[bold red]⚠ No message.[/] Use [cyan]--text <msg>[/], [cyan]--image <path>[/], [cyan]--audio <path>[/], or pipe text via stdin.");
@@ -121,10 +156,21 @@ public static class SendCommand
             }
 
             result = await weChat.SendTextAsync(toUser, message, contextToken: contextToken);
+            historyEntry = new SentHistoryData
+            {
+                ToUserId = toUser,
+                Kind = "text",
+                Text = message
+            };
         }
 
         if (result.Ret == 0)
         {
+            if (!settings.NoStore)
+            {
+                await historyStore.SaveSentAsync(historyEntry!, ct);
+            }
+
             AnsiConsole.MarkupLine($"[bold green]✓ {sentLabel} sent to {toUser}[/]");
             return 0;
         }
@@ -138,16 +184,30 @@ public static class SendCommand
         return 1;
     }
 
+    private static bool ContainsTextEscape(string? text)
+    {
+        return text?.Contains("\\n", StringComparison.Ordinal) == true;
+    }
+
+    private static string DecodeTextEscapes(string text)
+    {
+        return text.Replace("\\n", "\n", StringComparison.Ordinal);
+    }
+
+    private static string? ResolveAudioFormat(string audioPath, string? audioFormat)
+    {
+        if (!string.IsNullOrWhiteSpace(audioFormat))
+            return audioFormat.Trim().ToLowerInvariant();
+
+        var extension = Path.GetExtension(audioPath);
+        return string.IsNullOrWhiteSpace(extension) ? null : extension.TrimStart('.').ToLowerInvariant();
+    }
+
     private static int? ResolveAudioEncodeType(string audioPath, string? audioFormat, out string? error)
     {
         error = null;
 
-        var format = audioFormat;
-        if (string.IsNullOrWhiteSpace(format))
-        {
-            var extension = Path.GetExtension(audioPath);
-            format = string.IsNullOrWhiteSpace(extension) ? null : extension.TrimStart('.');
-        }
+        var format = ResolveAudioFormat(audioPath, audioFormat);
 
         if (string.IsNullOrWhiteSpace(format))
         {

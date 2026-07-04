@@ -26,7 +26,7 @@ public static class ListSendToCommand
         if (candidates.Count == 0)
         {
             AnsiConsole.MarkupLine("[yellow]No send-to candidates configured.[/]");
-            AnsiConsole.MarkupLine("\nConfigure targets in [cyan]appsettings.json[/] under [bold]WeChat:UserId[/] and [bold]WeChat:ToUsers[/].");
+            AnsiConsole.MarkupLine($"\nConfigure targets in [cyan]{Markup.Escape(AppPaths.ConfigFilePath)}[/] under [bold]WeChat:UserId[/] and [bold]WeChat:ToUsers[/].");
             return 0;
         }
 

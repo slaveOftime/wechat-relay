@@ -28,14 +28,16 @@ public static class ListenCommand
         var weChat = provider.GetRequiredService<IWeChatService>();
         var hookRunner = provider.GetRequiredService<IHookRunner>();
         var contextTokenStore = provider.GetRequiredService<IContextTokenStore>();
+        var historyStore = provider.GetRequiredService<IHistoryStore>();
 
-        return await ExecuteCoreAsync(weChat, hookRunner, contextTokenStore, linkedCts.Token);
+        return await ExecuteCoreAsync(weChat, hookRunner, contextTokenStore, historyStore, linkedCts.Token);
     }
 
     private static async Task<int> ExecuteCoreAsync(
         IWeChatService weChat,
         IHookRunner hookRunner,
         IContextTokenStore contextTokenStore,
+        IHistoryStore historyStore,
         CancellationToken ct)
     {
         if (!weChat.IsLoggedIn)
@@ -56,6 +58,13 @@ public static class ListenCommand
             var hookTask = hookRunner.ProcessLoopAsync(ct);
             await weChat.StartReceivingAsync(async msg =>
             {
+                if (!string.IsNullOrEmpty(msg.FromUserId) && !string.IsNullOrEmpty(msg.ContextToken))
+                    contextTokenStore.SetContextToken(msg.FromUserId, msg.ContextToken);
+
+                var saved = await historyStore.SaveReceivedAsync(msg, ct);
+                if (!saved)
+                    return;
+
                 var time = msg.CreateTimeMs.HasValue
                     ? DateTimeOffset.FromUnixTimeMilliseconds(msg.CreateTimeMs.Value).LocalDateTime.ToString("HH:mm:ss")
                     : "??:??:??";
@@ -67,9 +76,6 @@ public static class ListenCommand
 
                 AnsiConsole.MarkupLine(
                     $"[grey][[{Markup.Escape(time)}]][/] [bold]{Markup.Escape(seq)}[/] [blue]{Markup.Escape(fromUserId)}[/] [grey]type={Markup.Escape(messageType)}[/]{suffix}");
-
-                if (!string.IsNullOrEmpty(msg.FromUserId) && !string.IsNullOrEmpty(msg.ContextToken))
-                    contextTokenStore.SetContextToken(msg.FromUserId, msg.ContextToken);
 
                 hookRunner.Enqueue(msg);
             }, ct);

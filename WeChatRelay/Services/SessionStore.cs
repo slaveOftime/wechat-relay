@@ -29,9 +29,7 @@ public sealed class SessionStore(
     ILogger<SessionStore> log,
     string? rootPath = null) : ILoginSessionStore, IContextTokenStore
 {
-    private readonly string _rootPath = rootPath ?? Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "wechat-relay");
+    private readonly string _rootPath = rootPath ?? AppPaths.RootDirectory;
 
     private string SessionStatePath => Path.Combine(_rootPath, "session-state.json");
 

@@ -21,9 +21,11 @@ public static class Program
 
     public static void ConfigureServices(IServiceCollection services, bool verbose = false, string? hookCommandOverride = null)
     {
+        Directory.CreateDirectory(AppPaths.RootDirectory);
+
         var config = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json", optional: true)
+            .SetBasePath(AppPaths.RootDirectory)
+            .AddJsonFile(AppPaths.ConfigFileName, optional: true)
             .Build();
 
         services.AddSingleton<IConfiguration>(config);
@@ -54,6 +56,8 @@ public static class Program
         services.AddHttpClient<IWeChatService, WeChatService>();
 
         services.AddSingleton(BuildHookConfig(config.GetSection("Hook"), hookCommandOverride));
+        services.AddSingleton(BuildHistoryOptions(config.GetSection("History")));
+        services.AddSingleton<IHistoryStore, HistoryStore>();
         services.AddSingleton<IInboundMediaStore, InboundMediaStore>();
         services.AddSingleton<IHookRunner, HookRunner>();
     }
@@ -79,6 +83,12 @@ public static class Program
         {
             Command = hookCommandOverride ?? section[nameof(HookConfig.Command)] ?? "echo",
             WorkingDirectory = section[nameof(HookConfig.WorkingDirectory)]
+        };
+
+    private static HistoryOptions BuildHistoryOptions(IConfigurationSection section) =>
+        new()
+        {
+            DirectoryPath = section[nameof(HistoryOptions.DirectoryPath)]
         };
 
     private static RootCommand BuildCommandLine()
@@ -127,6 +137,30 @@ public static class Program
                 Verbose = parseResult.GetValue(listSendToVerboseOption)
             }));
 
+        var historyTailOption = new Option<int>("--tail")
+        {
+            Description = "Show the latest N history records",
+            DefaultValueFactory = _ => 10
+        };
+        var historyJsonOption = new Option<bool>("--json")
+        {
+            Description = "Output history as a JSON array"
+        };
+        var historyVerboseOption = CreateVerboseOption();
+        var historyCommand = new Command("history", "Show saved message history")
+        {
+            historyTailOption,
+            historyJsonOption,
+            historyVerboseOption
+        };
+        historyCommand.SetAction(parseResult =>
+            HistoryCommand.Execute(new HistoryCommandSettings
+            {
+                Tail = parseResult.GetValue(historyTailOption),
+                Json = parseResult.GetValue(historyJsonOption),
+                Verbose = parseResult.GetValue(historyVerboseOption)
+            }));
+
         var targetArgument = new Argument<string?>("target")
         {
             Arity = ArgumentArity.ZeroOrOne,
@@ -161,6 +195,10 @@ public static class Program
         {
             Description = "Optional audio duration in milliseconds"
         };
+        var noStoreOption = new Option<bool>("--no-store")
+        {
+            Description = "Do not save the sent message to history"
+        };
         var sendVerboseOption = CreateVerboseOption();
         var sendCommand = new Command("send", "Send a text, image, or audio message")
         {
@@ -172,6 +210,7 @@ public static class Program
             audioSampleRateOption,
             audioBitsPerSampleOption,
             audioPlaytimeOption,
+            noStoreOption,
             sendVerboseOption
         };
         sendCommand.SetAction(parseResult =>
@@ -185,12 +224,14 @@ public static class Program
                 AudioSampleRate = parseResult.GetValue(audioSampleRateOption),
                 AudioBitsPerSample = parseResult.GetValue(audioBitsPerSampleOption),
                 AudioPlaytimeMs = parseResult.GetValue(audioPlaytimeOption),
+                NoStore = parseResult.GetValue(noStoreOption),
                 Verbose = parseResult.GetValue(sendVerboseOption)
             }, CancellationToken.None).GetAwaiter().GetResult());
 
         rootCommand.Subcommands.Add(loginCommand);
         rootCommand.Subcommands.Add(listenCommand);
         rootCommand.Subcommands.Add(listSendToCommand);
+        rootCommand.Subcommands.Add(historyCommand);
         rootCommand.Subcommands.Add(sendCommand);
 
         return rootCommand;

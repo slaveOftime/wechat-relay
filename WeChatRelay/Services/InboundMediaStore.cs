@@ -13,10 +13,7 @@ public interface IInboundMediaStore
 public sealed class InboundMediaStore(IHttpClientFactory httpClientFactory, ILogger<InboundMediaStore> log) : IInboundMediaStore
 {
     private const string CdnDownloadBaseUrl = "https://novac2c.cdn.weixin.qq.com/c2c/download?encrypted_query_param=";
-    private readonly string _mediaRoot = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "wechat-relay",
-        "inbound-media");
+    private readonly string _mediaRoot = AppPaths.InboundMediaDirectory;
 
     public async Task<List<HookPayloadItem>> BuildHookItemsAsync(InboundMessage msg, CancellationToken ct = default)
     {
