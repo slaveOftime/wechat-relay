@@ -77,6 +77,8 @@ Translation: run `listen`, let them message you once, then `send` works.
 | `listen` | Long-polls WeChat and fires your hook for each inbound message |
 | `listen --hook "..."` | Overrides `Hook:Command` for the current run |
 | `list-send-to` | Prints send targets from `WeChat:UserId` and `WeChat:ToUsers` |
+| `history --tail 10` | Shows the latest saved received/sent messages |
+| `history --json` | Outputs saved history as a JSON array |
 | `send [target] --text "..."` | Sends a text message |
 | `send [target] --image ./file.jpg` | Uploads and sends an image |
 | `send [target] --audio ./file.silk` | Uploads and sends audio or voice |
@@ -99,7 +101,10 @@ Supported audio format hints: `pcm`, `wav`, `adpcm`, `feature`, `speex`, `amr`, 
 
 ## Config
 
-Put `appsettings.json` next to the executable or run from the project directory.
+Put `appsettings.json` in your per-user `wechat-relay` directory:
+
+- Windows: `C:\Users\<you>\wechat-relay\appsettings.json`
+- Linux/macOS: `~/wechat-relay/appsettings.json`
 
 ```json
 {
@@ -122,6 +127,7 @@ Notes:
 - `listen --hook` overrides `Hook:Command` without editing config
 - `UserId` is the default `send` target
 - `ToUsers` adds extra IDs for `list-send-to`
+- `History:DirectoryPath` is optional; by default, received/sent history JSON files are saved directly in the same per-user `wechat-relay` directory. Relative custom paths are resolved under that directory.
 
 ## Hook Mode
 
@@ -148,20 +154,21 @@ Minimal example:
     {
       "item_type": 2,
       "kind": "image",
-      "local_path": "C:\\Users\\you\\AppData\\Roaming\\wechat-relay\\inbound-media\\20260409\\msg-7447467781622590088-42\\00-image-image.jpg"
+      "local_path": "C:\\Users\\you\\wechat-relay\\inbound-media\\20260409\\msg-7447467781622590088-42\\00-image-image.jpg"
     }
   ],
   "context_token": "AARzJWAFAAABAAAA..."
 }
 ```
 
-Storage lives under your application data directory:
+Storage lives under your per-user `wechat-relay` directory, for example `C:\Users\<you>\wechat-relay` on Windows or `~/wechat-relay` on Linux/macOS:
 
+- `appsettings.json` stores CLI configuration
 - `session-state.json` stores login state and cached context tokens
-- `pending-messages.jsonl` stores queued hook work for crash recovery
+- `*.json` and `*.sent.json` store received and sent message history; unprocessed received history entries are also used for hook crash recovery
 - `inbound-media/` stores downloaded inbound images, audio, files, and video before the hook runs
 
-If the process dies after receipt but before hook execution, the next `listen` run drains the queue and replays the pending payloads.
+If the process dies after receipt but before hook execution, the next `listen` run replays unprocessed received entries from history.
 
 ## Console Vibe
 
