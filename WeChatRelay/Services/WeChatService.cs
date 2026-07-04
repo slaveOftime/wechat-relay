@@ -259,6 +259,7 @@ public class WeChatService(
                     }
                 }
             }
+            catch (TaskCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
