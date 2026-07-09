@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -33,6 +34,8 @@ public class WeChatService(
     private const int SessionExpiredErrCode = -14;
     private static readonly TimeSpan QrPollTimeout = TimeSpan.FromSeconds(35);
     private static readonly TimeSpan QrLoginTimeout = TimeSpan.FromMinutes(8);
+    private static readonly TimeSpan ReceivePollTimeout = TimeSpan.FromSeconds(70);
+    private static readonly TimeSpan ReceiveRetryDelay = TimeSpan.FromSeconds(5);
 
     public bool IsLoggedIn => !string.IsNullOrEmpty(cfg.BotToken) && !string.IsNullOrEmpty(cfg.BaseUrl);
 
@@ -229,13 +232,13 @@ public class WeChatService(
                 var url = new Uri(new Uri(NormalizeBaseUrl(cfg.BaseUrl!)), "ilink/bot/getupdates");
 
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                cts.CancelAfter(TimeSpan.FromSeconds(40));
+                cts.CancelAfter(ReceivePollTimeout);
 
                 ApplyHeaders();
-                var resp = await http.PostAsync(url, new StringContent(reqJson, Encoding.UTF8, "application/json"), cts.Token);
+                using var resp = await http.PostAsync(url, new StringContent(reqJson, Encoding.UTF8, "application/json"), cts.Token);
                 resp.EnsureSuccessStatusCode();
 
-                var respJson = await resp.Content.ReadAsStringAsync(ct);
+                var respJson = await resp.Content.ReadAsStringAsync(cts.Token);
                 var result = JsonSerializer.Deserialize(respJson, WeChatJsonContext.Default.GetUpdatesResponse);
 
                 if (result?.Ret == 0)
@@ -255,16 +258,39 @@ public class WeChatService(
                     else
                     {
                         log.LogWarning("getupdates failed: {Ret} {Err}", result?.Ret, result?.ErrMsg);
-                        await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                        await Task.Delay(ReceiveRetryDelay, ct);
                     }
                 }
             }
             catch (TaskCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (OperationCanceledException ex)
+            {
+                log.LogWarning(ex, "getupdates timed out after {TimeoutSeconds}s; retrying.", ReceivePollTimeout.TotalSeconds);
+                await Task.Delay(ReceiveRetryDelay, ct);
+            }
+            catch (HttpRequestException ex) when (IsAuthorizationFailure(ex.StatusCode))
+            {
+                InvalidateSession($"Receive loop authorization failed with HTTP {(int)ex.StatusCode!.Value} ({ex.StatusCode}). Re-login required.");
+                break;
+            }
+            catch (HttpRequestException ex)
+            {
+                if (ex.StatusCode is { } statusCode)
+                {
+                    log.LogWarning(ex, "getupdates HTTP failure: {StatusCode} ({StatusName}); retrying.", (int)statusCode, statusCode);
+                }
+                else
+                {
+                    log.LogWarning(ex, "getupdates HTTP request failed before a response; retrying.");
+                }
+
+                await Task.Delay(ReceiveRetryDelay, ct);
+            }
             catch (Exception ex)
             {
                 log.LogError(ex, "Receive loop error");
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                await Task.Delay(ReceiveRetryDelay, ct);
             }
         }
     }
@@ -387,6 +413,7 @@ public class WeChatService(
 
     private static string NormalizeBaseUrl(string u) => u.EndsWith('/') ? u : $"{u}/";
     private static string GenerateRandomUin() => Convert.ToBase64String(BitConverter.GetBytes(Random.Shared.Next(int.MinValue, int.MaxValue)));
+    private static bool IsAuthorizationFailure(HttpStatusCode? statusCode) => statusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
 
     private void InvalidateSession(string message)
     {

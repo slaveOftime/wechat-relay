@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console;
@@ -29,7 +30,11 @@ public static class HistoryCommand
 
         if (settings.Json)
         {
-            var json = JsonSerializer.Serialize(entries, WeChatJsonContext.Default.ListHistoryEntry);
+            var jsonContext = new WeChatJsonContext(new JsonSerializerOptions(WeChatJsonContext.Default.Options)
+            {
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
+            var json = JsonSerializer.Serialize(entries, jsonContext.ListHistoryEntry);
             Console.WriteLine(json);
             return 0;
         }
